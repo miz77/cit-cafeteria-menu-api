@@ -1,0 +1,159 @@
+{
+  "schemaVersion": "1.1",
+  "documentKind": "all-locations",
+  "date": "2026-07-06",
+  "timezone": "Asia/Tokyo",
+  "generatedAt": "2026-07-06T00:17:00Z",
+  "overallStatus": "ok",
+  "locations": [
+    {
+      "id": "tsudanuma",
+      "name": "津田沼食堂",
+      "campus": "津田沼",
+      "floor": null,
+      "status": "ok",
+      "menuText": {
+        "format": "plain_text",
+        "rawText": "サンプル定食\nサンプルカレー",
+        "lines": ["サンプル定食", "サンプルカレー"]
+      },
+      "menuItems": [
+        {
+          "name": "サンプル定食",
+          "nameLines": ["サンプル定食"],
+          "category": "koudai_teishoku",
+          "categoryLabel": "工大定食",
+          "priceYen": 350,
+          "priceText": "<工大350>",
+          "confidence": 0.9,
+          "warnings": []
+        },
+        {
+          "name": "サンプルカレー",
+          "nameLines": ["サンプルカレー"],
+          "category": "gourmet_curry",
+          "categoryLabel": "グルメカレー",
+          "priceYen": 350,
+          "priceText": "¥350",
+          "confidence": 0.9,
+          "warnings": []
+        }
+      ],
+      "unassignedLines": [],
+      "parser": {
+        "version": "simple-column-v2",
+        "confidence": 0.9,
+        "warnings": []
+      },
+      "source": {
+        "sourcePageUrl": "https://www.cit-s.com/dining/",
+        "pdfUrl": "https://www.cit-s.com/wp/wp-content/themes/cit/syokudo/t.pdf",
+        "fetchedAt": "2026-07-05T20:07:00Z",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "id": "shinnarashino-1f",
+      "name": "新習志野食堂 1F",
+      "campus": "新習志野",
+      "floor": "1F",
+      "status": "ok",
+      "menuText": {
+        "format": "plain_text",
+        "rawText": "サンプル丼\nサンプル麺",
+        "lines": ["サンプル丼", "サンプル麺"]
+      },
+      "menuItems": [
+        {
+          "name": "サンプル丼",
+          "nameLines": ["サンプル丼"],
+          "category": "unknown",
+          "categoryLabel": null,
+          "priceYen": null,
+          "priceText": null,
+          "confidence": 0.6,
+          "warnings": ["price_not_found", "category_unknown"]
+        },
+        {
+          "name": "サンプル麺",
+          "nameLines": ["サンプル麺"],
+          "category": "unknown",
+          "categoryLabel": null,
+          "priceYen": 350,
+          "priceText": "¥350",
+          "confidence": 0.6,
+          "warnings": ["category_unknown"]
+        }
+      ],
+      "unassignedLines": [],
+      "parser": {
+        "version": "simple-column-v2",
+        "confidence": 0.9,
+        "warnings": []
+      },
+      "source": {
+        "sourcePageUrl": "https://www.cit-s.com/dining/",
+        "pdfUrl": "https://www.cit-s.com/wp/wp-content/themes/cit/syokudo/s1.pdf",
+        "fetchedAt": "2026-07-05T20:07:00Z",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "id": "shinnarashino-2f",
+      "name": "新習志野食堂 2F",
+      "campus": "新習志野",
+      "floor": "2F",
+      "status": "ok",
+      "menuText": {
+        "format": "plain_text",
+        "rawText": "サンプルパスタ\nサンプルカレー",
+        "lines": ["サンプルパスタ", "サンプルカレー"]
+      },
+      "menuItems": [
+        {
+          "name": "サンプルパスタ",
+          "nameLines": ["サンプルパスタ"],
+          "category": "unknown",
+          "categoryLabel": null,
+          "priceYen": 400,
+          "priceText": "¥400",
+          "confidence": 0.6,
+          "warnings": ["category_unknown"]
+        },
+        {
+          "name": "サンプルカレー",
+          "nameLines": ["サンプルカレー"],
+          "category": "unknown",
+          "categoryLabel": null,
+          "priceYen": 350,
+          "priceText": "¥350",
+          "confidence": 0.6,
+          "warnings": ["category_unknown"]
+        }
+      ],
+      "unassignedLines": [],
+      "parser": {
+        "version": "simple-column-v2",
+        "confidence": 0.9,
+        "warnings": []
+      },
+      "source": {
+        "sourcePageUrl": "https://www.cit-s.com/dining/",
+        "pdfUrl": "https://www.cit-s.com/wp/wp-content/themes/cit/syokudo/s2.pdf",
+        "fetchedAt": "2026-07-05T20:07:00Z",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    }
+  ],
+  "warnings": [],
+  "notice": "This is an unofficial API generated from public cafeteria PDFs. Accuracy is not guaranteed. Please check the original PDF for official information.",
+  "project": {
+    "name": "cit-cafeteria-menu-api",
+    "license": "MIT"
+  },
+  "dataNotice": {
+    "official": false,
+    "source": "CITサービス学食メニューPDF",
+    "license": null
+  }
+}

@@ -1,0 +1,5 @@
+# Local-only Worker vars. Do not commit .dev.vars.
+# API Worker should not need write secrets.
+
+# For local testing only:
+# MENU_KV binding is configured through wrangler.

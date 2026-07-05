@@ -1,0 +1,17 @@
+name = "cit-cafeteria-menu-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-03"
+
+[vars]
+APP_ENV = "production"
+TIMEZONE = "Asia/Tokyo"
+
+[[kv_namespaces]]
+binding = "MENU_KV"
+# Placeholder used for public source and local dry-run builds.
+# The deploy workflow replaces this value with CLOUDFLARE_KV_NAMESPACE_ID.
+id = "00000000000000000000000000000000"
+
+# No Cron triggers here.
+# PDF ingestion is performed by GitHub Actions, not by Cloudflare Workers.
+# No R2 buckets are configured.

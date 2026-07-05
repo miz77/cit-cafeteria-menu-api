@@ -1,0 +1,629 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/miz77/cit-cafeteria-menu-api/main/docs/schemas/menu.schema.json",
+  "title": "CIT Cafeteria Menu API Document",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/MenuDocument"
+    },
+    {
+      "$ref": "#/$defs/LocationMenuDocument"
+    },
+    {
+      "$ref": "#/$defs/MenuWeekDocument"
+    },
+    {
+      "$ref": "#/$defs/LocationMenuWeekDocument"
+    }
+  ],
+  "$defs": {
+    "LocationId": {
+      "type": "string",
+      "enum": ["tsudanuma", "shinnarashino-1f", "shinnarashino-2f"]
+    },
+    "LocationStatus": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "closed",
+        "not_published",
+        "fetch_failed",
+        "parse_failed",
+        "source_changed",
+        "source_too_large",
+        "unknown"
+      ]
+    },
+    "OverallStatus": {
+      "type": "string",
+      "enum": ["ok", "partial", "failed", "stale"]
+    },
+    "MenuCategory": {
+      "type": "string",
+      "enum": [
+        "asa_teishoku",
+        "koudai_teishoku",
+        "yu_teishoku",
+        "higawari_salad",
+        "gourmet_curry",
+        "men_corner",
+        "keishoku_pasta",
+        "unknown"
+      ]
+    },
+    "MenuItemWarning": {
+      "type": "string",
+      "enum": ["price_not_found", "category_unknown", "name_may_be_incomplete"]
+    },
+    "MenuItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "nameLines", "category", "categoryLabel", "priceYen", "priceText", "confidence", "warnings"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nameLines": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "maxItems": 20
+        },
+        "category": {
+          "$ref": "#/$defs/MenuCategory"
+        },
+        "categoryLabel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priceYen": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priceText": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "enum": [0.9, 0.6, 0.3]
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MenuItemWarning"
+          }
+        }
+      }
+    },
+    "Location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "campus", "floor"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/LocationId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "campus": {
+          "type": "string",
+          "enum": ["津田沼", "新習志野"]
+        },
+        "floor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["1F", "2F"]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "MenuText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "rawText", "lines"],
+      "properties": {
+        "format": {
+          "const": "plain_text"
+        },
+        "rawText": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 20000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "maxItems": 1000
+        }
+      }
+    },
+    "ParserInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "confidence", "warnings"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "SourceInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourcePageUrl", "pdfUrl"],
+      "properties": {
+        "sourcePageUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "pdfUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "fetchedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "LocationMenu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "campus",
+        "floor",
+        "status",
+        "menuText",
+        "menuItems",
+        "unassignedLines",
+        "parser",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/LocationId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "campus": {
+          "type": "string",
+          "enum": ["津田沼", "新習志野"]
+        },
+        "floor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["1F", "2F"]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/LocationStatus"
+        },
+        "statusMessage": {
+          "type": "string"
+        },
+        "menuText": {
+          "$ref": "#/$defs/MenuText"
+        },
+        "menuItems": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MenuItem"
+          },
+          "maxItems": 200
+        },
+        "unassignedLines": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "maxItems": 1000
+        },
+        "parser": {
+          "$ref": "#/$defs/ParserInfo"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceInfo"
+        }
+      }
+    },
+    "MenuWeekDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "overallStatus", "locations", "warnings"],
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "overallStatus": {
+          "$ref": "#/$defs/OverallStatus"
+        },
+        "locations": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/LocationMenu"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "LocationMenuWeekDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "location", "warnings"],
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "location": {
+          "$ref": "#/$defs/LocationMenu"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ProjectNotice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "license"],
+      "properties": {
+        "name": {
+          "const": "cit-cafeteria-menu-api"
+        },
+        "license": {
+          "const": "MIT"
+        },
+        "repository": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "DataNotice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["official", "source", "license"],
+      "properties": {
+        "official": {
+          "const": false
+        },
+        "source": {
+          "const": "CITサービス学食メニューPDF"
+        },
+        "license": {
+          "type": "null"
+        }
+      }
+    },
+    "MenuDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "documentKind",
+        "date",
+        "timezone",
+        "generatedAt",
+        "overallStatus",
+        "locations",
+        "warnings",
+        "notice",
+        "project",
+        "dataNotice"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.1"
+        },
+        "documentKind": {
+          "const": "all-locations"
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "timezone": {
+          "const": "Asia/Tokyo"
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notice": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectNotice"
+        },
+        "dataNotice": {
+          "$ref": "#/$defs/DataNotice"
+        },
+        "overallStatus": {
+          "$ref": "#/$defs/OverallStatus"
+        },
+        "locations": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/LocationMenu"
+          }
+        }
+      }
+    },
+    "LocationMenuDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "documentKind",
+        "date",
+        "timezone",
+        "generatedAt",
+        "location",
+        "warnings",
+        "notice",
+        "project",
+        "dataNotice"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.1"
+        },
+        "documentKind": {
+          "const": "single-location"
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "timezone": {
+          "const": "Asia/Tokyo"
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notice": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectNotice"
+        },
+        "dataNotice": {
+          "$ref": "#/$defs/DataNotice"
+        },
+        "location": {
+          "$ref": "#/$defs/LocationMenu"
+        }
+      }
+    },
+    "MenuWeekDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "documentKind",
+        "scope",
+        "weekStartDate",
+        "timezone",
+        "generatedAt",
+        "overallStatus",
+        "days",
+        "warnings",
+        "notice",
+        "project",
+        "dataNotice"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.1"
+        },
+        "documentKind": {
+          "const": "week"
+        },
+        "scope": {
+          "const": "all-locations"
+        },
+        "weekStartDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "timezone": {
+          "const": "Asia/Tokyo"
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "overallStatus": {
+          "$ref": "#/$defs/OverallStatus"
+        },
+        "days": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/MenuWeekDay"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notice": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectNotice"
+        },
+        "dataNotice": {
+          "$ref": "#/$defs/DataNotice"
+        }
+      }
+    },
+    "LocationMenuWeekDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "documentKind",
+        "scope",
+        "weekStartDate",
+        "timezone",
+        "generatedAt",
+        "location",
+        "days",
+        "warnings",
+        "notice",
+        "project",
+        "dataNotice"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1.1"
+        },
+        "documentKind": {
+          "const": "week"
+        },
+        "scope": {
+          "const": "single-location"
+        },
+        "weekStartDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "timezone": {
+          "const": "Asia/Tokyo"
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "days": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/LocationMenuWeekDay"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notice": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectNotice"
+        },
+        "dataNotice": {
+          "$ref": "#/$defs/DataNotice"
+        }
+      }
+    }
+  }
+}

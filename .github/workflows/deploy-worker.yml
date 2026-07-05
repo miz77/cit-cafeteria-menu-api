@@ -1,0 +1,74 @@
+name: Deploy API Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api-worker/**"
+      - "packages/schema/**"
+      - "scripts/check-forbidden-worker-deps.mjs"
+      - "scripts/check-worker-bundle.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/deploy-worker.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-worker-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build, verify, and deploy Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check required Cloudflare secrets
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_KV_NAMESPACE_ID"
+
+      - name: Configure production KV namespace
+        run: |
+          node -e "const fs = require('node:fs'); const path = 'apps/api-worker/wrangler.toml'; const id = process.env.CLOUDFLARE_KV_NAMESPACE_ID; const text = fs.readFileSync(path, 'utf8'); fs.writeFileSync(path, text.replace('00000000000000000000000000000000', id));"
+
+      - name: Typecheck API Worker
+        run: pnpm --filter @cit-cafeteria/api-worker typecheck
+
+      - name: Test API Worker
+        run: pnpm --filter @cit-cafeteria/api-worker test
+
+      - name: Build API Worker dry-run bundle
+        run: pnpm --filter @cit-cafeteria/api-worker build
+
+      - name: Check forbidden API Worker dependencies
+        run: pnpm --filter @cit-cafeteria/api-worker check:forbidden-deps
+
+      - name: Check API Worker bundle size
+        run: pnpm --filter @cit-cafeteria/api-worker check:bundle
+
+      - name: Deploy API Worker
+        run: pnpm --filter @cit-cafeteria/api-worker exec wrangler deploy

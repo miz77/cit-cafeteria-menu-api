@@ -1,0 +1,21 @@
+{
+  "name": "@cit-cafeteria/api-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "XDG_CONFIG_HOME=../.. wrangler deploy --dry-run --outdir bundled",
+    "check:bundle": "node ../../scripts/check-worker-bundle.mjs bundled 2621440",
+    "check:forbidden-deps": "node ../../scripts/check-forbidden-worker-deps.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cit-cafeteria/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260701.1",
+    "wrangler": "^4.26.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

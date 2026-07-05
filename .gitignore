@@ -1,0 +1,12 @@
+node_modules/
+dist/
+bundled/
+.wrangler/
+.claude/
+.codex/
+.agents/
+.dev.vars
+.env
+*.log
+*.pdf
+coverage/

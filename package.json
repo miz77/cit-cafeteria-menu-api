@@ -1,0 +1,22 @@
+{
+  "name": "cit-cafeteria-menu-api-repo",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "lint": "oxlint .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "ingest:dry-run": "pnpm --filter @cit-cafeteria/ingest dry-run",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm --filter @cit-cafeteria/api-worker build && pnpm --filter @cit-cafeteria/api-worker check:forbidden-deps && pnpm --filter @cit-cafeteria/api-worker check:bundle"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.8",
+    "@types/node": "^22.13.0",
+    "oxlint": "^1.30.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

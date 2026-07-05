@@ -1,0 +1,21 @@
+{
+  "name": "@cit-cafeteria/ingest",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ingest": "tsx src/main.ts",
+    "dry-run": "DRY_RUN=true DRY_RUN_OUTPUT_DIR=/tmp/cit-cafeteria-dry-run tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cit-cafeteria/schema": "workspace:*",
+    "ajv": "^8.17.1",
+    "unpdf": "^1.2.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
