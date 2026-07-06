@@ -46,6 +46,7 @@ GET https://cit-cafeteria-menu-api.miz77.workers.dev/api/v1/locations/tsudanuma/
 `menuItems` が空なら、簡易表示やデバッグには `location.menuText.lines` を使います。
 
 レスポンス項目の意味は [docs/api-guide.md](docs/api-guide.md)、API 契約は [docs/openapi.yaml](docs/openapi.yaml) を参照してください。
+ブラウザでは `https://cit-cafeteria-menu-api.miz77.workers.dev/docs` から API リファレンスを確認できます。
 
 ## 構成
 

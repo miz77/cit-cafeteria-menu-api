@@ -41,6 +41,11 @@ function documentedOpenApiPaths(): string[] {
   return Array.from(yaml.matchAll(/^  (\/api\/v1\/[^:]+):$/gm), (match) => match[1]);
 }
 
+function documentedOpenApiServerUrls(): string[] {
+  const yaml = readFileSync(new URL("../../../docs/openapi.yaml", import.meta.url), "utf8");
+  return Array.from(yaml.matchAll(/^  - url: (https:\/\/\S+)$/gm), (match) => match[1]);
+}
+
 describe("document generation", () => {
   it("generates all-location and location-specific menu KV writes", () => {
     const generated = generateMenuDocuments(
@@ -94,11 +99,13 @@ describe("document generation", () => {
     expect(openApiWrite).toBeDefined();
     const openApi = JSON.parse(openApiWrite?.value ?? "{}") as {
       openapi?: string;
+      servers?: { url: string }[];
       paths?: Record<string, unknown>;
       components?: { schemas?: Record<string, unknown> };
     };
 
     expect(openApi.openapi).toBe("3.1.0");
+    expect(openApi.servers?.map((server) => server.url)).toEqual(documentedOpenApiServerUrls());
     expect(Object.keys(openApi.paths ?? {})).toEqual(documentedOpenApiPaths());
     expect(openApi.components?.schemas?.HealthResponse).toBeDefined();
     expect(openApi.components?.schemas?.MenuDocument).toBeDefined();

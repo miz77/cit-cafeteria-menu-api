@@ -4,6 +4,7 @@ compatibility_date = "2026-07-03"
 
 [vars]
 APP_ENV = "production"
+DOCS_URL = "https://cit-cafeteria-menu-api.pages.dev/"
 TIMEZONE = "Asia/Tokyo"
 
 [[kv_namespaces]]

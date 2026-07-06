@@ -6,6 +6,8 @@ info:
   description: CITサービスが公開している学食メニュー PDF から生成した非公式 JSON API です。正確性は保証しません。
   license:
     name: MIT
+servers:
+  - url: https://cit-cafeteria-menu-api.miz77.workers.dev
 tags:
   - name: locations
   - name: menus

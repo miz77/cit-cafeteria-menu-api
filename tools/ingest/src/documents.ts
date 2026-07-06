@@ -251,6 +251,7 @@ function generateWeekMenuWrites(days: readonly MenuWeekDay[], generatedAt: strin
 }
 
 function openApiJson(): Record<string, unknown> {
+  const apiBaseUrl = "https://cit-cafeteria-menu-api.miz77.workers.dev";
   const menuSchemaUrl =
     "https://raw.githubusercontent.com/miz77/cit-cafeteria-menu-api/main/docs/schemas/menu.schema.json";
   const menuSchema = (name: string) => ({ $ref: `${menuSchemaUrl}#/$defs/${name}` });
@@ -272,6 +273,7 @@ function openApiJson(): Record<string, unknown> {
       description: "CITサービスが公開している学食メニュー PDF から生成した非公式 JSON API です。正確性は保証しません。",
       license: { name: "MIT" }
     },
+    servers: [{ url: apiBaseUrl }],
     tags: [{ name: "locations" }, { name: "menus" }, { name: "sources" }, { name: "health" }],
     components: {
       parameters: {

@@ -2,6 +2,7 @@ import { isLocationId, kvKeys } from "@cit-cafeteria/schema";
 
 export interface Env {
   MENU_KV: KVNamespace;
+  DOCS_URL?: string;
   TIMEZONE?: string;
 }
 
@@ -31,6 +32,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 
   const url = new URL(request.url);
   const path = stripTrailingSlash(url.pathname);
+
+  if (path === "/docs") {
+    return docsRedirect(env, path);
+  }
+
   const key = routeToKvKey(path);
 
   if (key.kind === "problem") {
@@ -168,6 +174,34 @@ function problemRoute(status: number, title: string, detail: string): RouteResul
   };
 }
 
+function docsRedirect(env: Env, path: string): Response {
+  const docsUrl = normalizeDocsUrl(env.DOCS_URL);
+  if (!docsUrl) {
+    return problem(500, "Docs URL not configured", "DOCS_URL must be configured.", path);
+  }
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      ...CORS_HEADERS,
+      location: docsUrl,
+      "cache-control": NO_STORE
+    }
+  });
+}
+
+function normalizeDocsUrl(value: string | undefined): string | null {
+  if (!value) return null;
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function validateDatePathSegment(date: string): RouteResult | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return problemRoute(400, "Invalid date", "date must be YYYY-MM-DD");
@@ -287,5 +321,6 @@ export const __test__ = {
   todayInAsiaTokyo,
   weekStartDateInAsiaTokyo,
   validateDatePathSegment,
+  normalizeDocsUrl,
   stripTrailingSlash
 };

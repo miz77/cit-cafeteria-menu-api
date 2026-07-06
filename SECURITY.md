@@ -20,6 +20,8 @@ Cloudflare API token は、対象 Workers KV namespace への書き込みと Wor
 
 公開 API handler は Cloudflare Workers KV を読むだけにしてください。
 
+例外として `/docs` は固定 `DOCS_URL` へ redirect できます。open redirect を避けるため、request path、query、host、referer を `Location` に反映しないでください。
+
 ## 依存関係の境界
 
 API Worker は PDF parser package や Discord package に依存しません。
