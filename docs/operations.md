@@ -12,6 +12,17 @@ CLOUDFLARE_KV_NAMESPACE_ID
 
 Cloudflare API token は、対象 Workers KV namespace への書き込みと Worker deploy に必要な最小権限にしてください。
 
+GitHub CLI を使う場合は、作業ディレクトリで次を実行します。
+
+```bash
+gh secret set CLOUDFLARE_ACCOUNT_ID
+gh secret set CLOUDFLARE_API_TOKEN
+gh secret set CLOUDFLARE_KV_NAMESPACE_ID
+```
+
+各コマンドの実行後に、`gh` が値の入力を求めます。
+別のディレクトリから設定する場合は `-R OWNER/REPO` を付けてください。
+
 ## Worker の KV binding
 
 `apps/api-worker/wrangler.toml` には公開リポジトリ用の placeholder KV namespace ID を置いています。
@@ -34,7 +45,56 @@ ingest workflow は次の時刻に実行します。
 火曜 08:27 JST: backup
 ```
 
-各 workflow run は ingest/upload step だけを最大 3 回 retry します。手動実行では `YYYY-MM-DD` 形式の `target_date` を任意で指定できます。
+scheduled ingest は GitHub repository variable `ENABLE_SCHEDULED_INGEST=true` を設定した repository だけで実行します。
+fork や clone 先で自動的にCITサービスへ HTTP リクエストを送り続けないための opt-in gate です。
+本番運用する repository では、GitHub の Settings > Secrets and variables > Actions > Variables に `ENABLE_SCHEDULED_INGEST=true` を設定してください。
+この設定がない場合、scheduled run は実行されず skip されます。
+GitHub CLI を使う場合は、次を実行します。
+
+```bash
+gh variable set ENABLE_SCHEDULED_INGEST --body true
+```
+
+
+各 workflow run は、再試行で回復する可能性がある ingest または upload の失敗だけを最大 3 回再試行します。
+parse 失敗、`source_changed`、secrets の不足、休業設定の破損など、再試行しても回復しない失敗は再試行しません。
+
+手動実行では `YYYY-MM-DD` 形式の `target_date` を任意で指定できます。
+`force=true` を指定すると、今週分が生成済みでもCITサービスから再取得します。
+週中の PDF 訂正を反映する場合や、長期休業明けの再開日に手動更新する場合は `force=true` を指定してください。
+
+### 休業期間
+
+長期休業などで scheduled ingest を止めたい期間は `tools/ingest/pauses.json` に追加します。
+
+```json
+{
+  "pausePeriods": [
+    { "from": "2026-07-18", "to": "2026-09-17", "reason": "summer_break" }
+  ]
+}
+```
+
+`from` と `to` は `Asia/Tokyo` の日付で、どちらも skip 対象期間に含まれます。
+`to` には、scheduled ingest を止めたい最終日を指定します。
+休業最終日までCITサービスへ HTTP リクエストを送らない場合は、休業最終日を `to` に指定してください。
+営業再開日が次の scheduled run より前に来る場合は、必要に応じて `force=true` で手動実行してください。
+
+`schedule` で起動した run が休業期間内の場合、CITサービスへ HTTP リクエストを送らず、成功として終了します。
+手動実行と dry-run には、休業期間による skip を適用しません。
+ただし、手動実行で生成済み skip も避ける場合は `force=true` を指定してください。
+休業設定 JSON が壊れている場合は、手動実行、scheduled run、dry-run のいずれもCITサービスへ HTTP リクエストを送る前に失敗します。
+
+### 生成済み skip
+
+今週分が既に正常生成済みの場合、backup の scheduled run はCITサービスへ HTTP リクエストを送らず、成功として終了します。
+判定には `health:v1:last-update` と `menu:v1:week:YYYY-MM-DD:all` の両方を使います。
+
+この skip により、週中にCITサービス側で PDF が訂正されても自動では拾いません。
+訂正を反映したい場合は `Update cafeteria menu data` を `force=true` で手動実行してください。
+
+長期休業明けの月曜にCITサービス側の PDF がまだ更新されていない場合、scheduled ingest は今週分のメニュー JSON を生成しないことがあります。
+再開日に手動実行する場合は `force=true` を指定してください。
 
 ## Dry Run
 

@@ -17,6 +17,11 @@ on:
         description: "Optional Asia/Tokyo date to use for week calculation, YYYY-MM-DD"
         required: false
         type: string
+      force:
+        description: "Fetch from CIT even if the current week was already generated"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -28,6 +33,7 @@ concurrency:
 jobs:
   update:
     name: Fetch, parse, generate, and upload KV JSON
+    if: github.event_name != 'schedule' || vars.ENABLE_SCHEDULED_INGEST == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -35,6 +41,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
       TARGET_DATE: ${{ inputs.target_date || '' }}
+      FORCE_REFRESH: ${{ inputs.force || 'false' }}
       MAX_SOURCE_PDF_BYTES: "5242880"
       HARD_MAX_SOURCE_PDF_BYTES: "10485760"
       EXPECTED_PAGES_PER_PDF: "1"
@@ -73,13 +80,38 @@ jobs:
             fi
 
             echo "Running ingest attempt ${attempt}/3..."
-            if pnpm --filter @cit-cafeteria/ingest ingest; then
+            set +e
+            pnpm --filter @cit-cafeteria/ingest ingest
+            code=$?
+            set -e
+
+            if [ "$code" -eq 0 ]; then
               echo "Ingest succeeded on attempt ${attempt}/3."
               exit 0
             fi
 
-            echo "Ingest attempt ${attempt}/3 failed." >&2
+            if [ "$code" -eq 20 ]; then
+              echo "Ingest failed with a non-retryable error." >&2
+              if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+                {
+                  echo "## Cafeteria Ingest Failed"
+                  echo
+                  echo "- Reason: non-retryable ingest failure"
+                  echo "- Exit code: \`20\`"
+                  echo "- Retry: not attempted"
+                  echo
+                } >> "$GITHUB_STEP_SUMMARY"
+              fi
+              exit 20
+            fi
+
+            if [ "$code" -ne 10 ]; then
+              echo "Ingest failed with unexpected exit code ${code}." >&2
+              exit "$code"
+            fi
+
+            echo "Ingest attempt ${attempt}/3 failed with a retryable error." >&2
           done
 
-          echo "Ingest failed after 3 attempts." >&2
-          exit 1
+          echo "Ingest failed after 3 retryable attempts." >&2
+          exit 10

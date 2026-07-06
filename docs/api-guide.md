@@ -1,6 +1,7 @@
 # API Guide
 
-この API は、CITサービスが公開している学食メニュー PDF から生成した JSON を返します。生成メニューデータを MIT License の対象とは説明しません。
+この API は、CITサービスが公開している学食メニュー PDF から生成した JSON を返します。
+生成メニューデータを MIT License の対象とは説明しません。
 
 ## 最小例
 
@@ -31,6 +32,8 @@ if (location.status !== "ok") {
 ```
 
 `today` と `week` は `Asia/Tokyo` 基準です。食堂 ID は `tsudanuma`, `shinnarashino-1f`, `shinnarashino-2f` です。
+
+長期休業中、メニュー未公開期間、または対象日の JSON がまだ生成されていない場合、メニュー endpoint は 404 を返すことがあります。
 
 ## メニュー項目
 
