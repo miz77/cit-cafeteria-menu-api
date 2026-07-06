@@ -14,17 +14,13 @@ curl:
 curl https://cit-cafeteria-menu-api.miz77.workers.dev/api/v1/locations/tsudanuma/menus/today
 ```
 
-食堂 ID:
+URL の `tsudanuma` は食堂を表す `locationId` です。ほかの食堂を見る場合は次の値に置き換えます。
 
 ```text
-tsudanuma
-shinnarashino-1f
-shinnarashino-2f
+tsudanuma          津田沼食堂
+shinnarashino-1f   新習志野食堂 1F
+shinnarashino-2f   新習志野食堂 2F
 ```
-
-日付は `Asia/Tokyo` 基準です。
-
-表示には `location.menuItems` を使います。`location.status` が `ok` 以外の場合や `menuItems` が空の場合は、必要に応じて `location.menuText.lines` をフォールバックにしてください。
 
 詳しい仕様:
 
@@ -92,6 +88,6 @@ pnpm --filter @cit-cafeteria/ingest dry-run
 
 このリポジトリ内のソースコードとドキュメントは MIT License です。
 
-生成されるメニューデータは、CITサービスが公開している PDF に由来する便利用データです。このリポジトリは元 PDF や第三者のメニュー内容の所有権を主張しません。また、生成メニューデータを MIT License の対象とは説明しません。
+生成されるメニューデータは、CITサービスが公開している PDF をもとに変換したものです。このリポジトリは、元 PDF やメニュー内容の所有権を主張しません。また、生成メニューデータを MIT License の対象とは説明しません。
 
 このプロジェクトは非公式であり、千葉工業大学およびCITサービスとは関係ありません。公式情報は元 PDF を確認してください。

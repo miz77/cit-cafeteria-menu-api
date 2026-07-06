@@ -281,6 +281,7 @@ function openApiJson(): Record<string, unknown> {
           name: "date",
           in: "path",
           required: true,
+          description: "日付。`YYYY-MM-DD` 形式で指定します。",
           schema: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
           example: "2026-07-06"
         },
@@ -391,7 +392,7 @@ function openApiJson(): Record<string, unknown> {
       "/api/v1/locations": {
         get: {
           tags: ["locations"],
-          summary: "食堂一覧を返します。",
+          summary: "食堂一覧",
           responses: {
             "200": { description: "食堂一覧", ...json({ $ref: "#/components/schemas/LocationsResponse" }) },
             "404": problem
@@ -401,7 +402,7 @@ function openApiJson(): Record<string, unknown> {
       "/api/v1/menus/today": {
         get: {
           tags: ["menus"],
-          summary: "今日の全食堂メニューを返します。",
+          summary: "今日の全食堂メニュー",
           responses: {
             "200": {
               description: "全食堂の日次メニュー",
@@ -414,7 +415,7 @@ function openApiJson(): Record<string, unknown> {
       "/api/v1/menus/week": {
         get: {
           tags: ["menus"],
-          summary: "今週の全食堂メニューを返します。",
+          summary: "今週の全食堂メニュー",
           responses: {
             "200": {
               description: "全食堂の週次メニュー",
@@ -427,7 +428,7 @@ function openApiJson(): Record<string, unknown> {
       "/api/v1/menus/{date}": {
         get: {
           tags: ["menus"],
-          summary: "指定日の全食堂メニューを返します。",
+          summary: "指定日の全食堂メニュー",
           parameters: [{ $ref: "#/components/parameters/Date" }],
           responses: {
             "200": {
@@ -442,7 +443,7 @@ function openApiJson(): Record<string, unknown> {
       "/api/v1/locations/{locationId}/menus/today": {
         get: {
           tags: ["menus"],
-          summary: "今日の指定食堂メニューを返します。",
+          summary: "今日の指定食堂メニュー",
           parameters: [{ $ref: "#/components/parameters/LocationId" }],
           responses: {
             "200": {
@@ -456,7 +457,7 @@ function openApiJson(): Record<string, unknown> {
       "/api/v1/locations/{locationId}/menus/week": {
         get: {
           tags: ["menus"],
-          summary: "今週の指定食堂メニューを返します。",
+          summary: "今週の指定食堂メニュー",
           parameters: [{ $ref: "#/components/parameters/LocationId" }],
           responses: {
             "200": {
@@ -470,7 +471,7 @@ function openApiJson(): Record<string, unknown> {
       "/api/v1/locations/{locationId}/menus/{date}": {
         get: {
           tags: ["menus"],
-          summary: "指定日・指定食堂のメニューを返します。",
+          summary: "指定日の指定食堂メニュー",
           parameters: [{ $ref: "#/components/parameters/LocationId" }, { $ref: "#/components/parameters/Date" }],
           responses: {
             "200": {
@@ -485,9 +486,9 @@ function openApiJson(): Record<string, unknown> {
       "/api/v1/sources": {
         get: {
           tags: ["sources"],
-          summary: "現在週の source metadata を返します。",
+          summary: "取得元PDFの情報",
           responses: {
-            "200": { description: "source metadata", ...json({ $ref: "#/components/schemas/SourcesResponse" }) },
+            "200": { description: "取得元PDFの情報", ...json({ $ref: "#/components/schemas/SourcesResponse" }) },
             "404": problem
           }
         }
@@ -495,16 +496,16 @@ function openApiJson(): Record<string, unknown> {
       "/api/v1/health": {
         get: {
           tags: ["health"],
-          summary: "最新 ingest/update の状態を返します。",
+          summary: "最新更新処理の状態",
           responses: {
-            "200": { description: "health response", ...json({ $ref: "#/components/schemas/HealthResponse" }) },
+            "200": { description: "最新更新処理の状態", ...json({ $ref: "#/components/schemas/HealthResponse" }) },
             "404": problem
           }
         }
       },
       "/api/v1/openapi.json": {
         get: {
-          summary: "OpenAPI document を JSON で返します。",
+          summary: "OpenAPI JSON",
           responses: {
             "200": { description: "OpenAPI JSON", ...json({ type: "object" }) },
             "404": problem
