@@ -5,17 +5,18 @@ import { describe, expect, it } from "vitest";
 import { isPausedOn, loadPausePeriods } from "./pauses";
 
 describe("pause periods", () => {
-  it("loads the repository pause config", async () => {
-    await expect(loadPausePeriods()).resolves.toEqual([]);
+  it("loads and validates the repository pause config", async () => {
+    const periods = await loadPausePeriods();
+    expect(Array.isArray(periods)).toBe(true);
   });
 
   it("matches inclusive pause boundaries", () => {
-    const periods = [{ from: "2026-08-01", to: "2026-09-20", reason: "summer_break" }];
+    const periods = [{ from: "2026-01-10", to: "2026-01-12", reason: "test" }];
 
-    expect(isPausedOn("2026-07-31", periods)).toBeNull();
-    expect(isPausedOn("2026-08-01", periods)?.reason).toBe("summer_break");
-    expect(isPausedOn("2026-09-20", periods)?.reason).toBe("summer_break");
-    expect(isPausedOn("2026-09-21", periods)).toBeNull();
+    expect(isPausedOn("2026-01-09", periods)).toBeNull();
+    expect(isPausedOn("2026-01-10", periods)?.reason).toBe("test");
+    expect(isPausedOn("2026-01-12", periods)?.reason).toBe("test");
+    expect(isPausedOn("2026-01-13", periods)).toBeNull();
   });
 
   it("rejects malformed configs and invalid ranges", async () => {

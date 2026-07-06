@@ -1,3 +1,7 @@
 {
-  "pausePeriods": []
+  "pausePeriods": [
+    { "from": "2026-07-18", "to": "2026-09-17", "reason": "summer_break" },
+    { "from": "2026-11-20", "to": "2026-11-23", "reason": "campus_event_break" },
+    { "from": "2026-12-23", "to": "2027-03-31", "reason": "winter_spring_break" }
+  ]
 }

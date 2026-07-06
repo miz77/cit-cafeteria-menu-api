@@ -13,6 +13,7 @@ const ENV: IngestEnv = {
   CLOUDFLARE_API_TOKEN: "token",
   CLOUDFLARE_KV_NAMESPACE_ID: "namespace"
 };
+const TEST_PAUSE_DATE = "2026-08-01";
 
 type ReadKvValue = (config: CloudflareKvConfig, key: string) => Promise<string | null>;
 
@@ -67,10 +68,10 @@ describe("ingest runner", () => {
     const result = await runIngest({
       env: {
         GITHUB_EVENT_NAME: "schedule",
-        TARGET_DATE: "2026-08-01"
+        TARGET_DATE: TEST_PAUSE_DATE
       },
       fetchImpl,
-      pauseConfigPath: await pauseConfig([{ from: "2026-08-01", to: "2026-09-20", reason: "summer_break" }])
+      pauseConfigPath: await testPauseConfig()
     });
 
     expect(result).toMatchObject({ dates: [], writes: [], skipped: "paused" });
@@ -83,12 +84,12 @@ describe("ingest runner", () => {
         env: {
           ...ENV,
           GITHUB_EVENT_NAME: "workflow_dispatch",
-          TARGET_DATE: "2026-08-01"
+          TARGET_DATE: TEST_PAUSE_DATE
         },
         fetchImpl: failingCitFetch(manualCalls),
         readKvValue: async () => null,
         upload: async () => {},
-        pauseConfigPath: await pauseConfig([{ from: "2026-08-01", to: "2026-09-20", reason: "summer_break" }])
+        pauseConfigPath: await testPauseConfig()
       })
     ).rejects.toBeInstanceOf(IngestRunError);
     expect(manualCalls[0]).toBe(SOURCE_PAGE_URL);
@@ -98,10 +99,10 @@ describe("ingest runner", () => {
       env: {
         DRY_RUN: "true",
         GITHUB_EVENT_NAME: "schedule",
-        TARGET_DATE: "2026-08-01"
+        TARGET_DATE: TEST_PAUSE_DATE
       },
       fetchImpl: failingCitFetch(dryRunCalls),
-      pauseConfigPath: await pauseConfig([{ from: "2026-08-01", to: "2026-09-20", reason: "summer_break" }])
+      pauseConfigPath: await testPauseConfig()
     });
     expect(dryRunResult).not.toHaveProperty("skipped");
     expect(dryRunCalls[0]).toBe(SOURCE_PAGE_URL);
@@ -305,6 +306,10 @@ function currentWeekHealth(overrides: Record<string, unknown> = {}): string {
 
 async function pauseConfig(periods: Array<{ from: string; to: string; reason: string }>): Promise<string> {
   return rawPauseConfig(JSON.stringify({ pausePeriods: periods }));
+}
+
+async function testPauseConfig(): Promise<string> {
+  return pauseConfig([{ from: TEST_PAUSE_DATE, to: TEST_PAUSE_DATE, reason: "test" }]);
 }
 
 async function rawPauseConfig(value: string): Promise<string> {
