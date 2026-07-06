@@ -2,8 +2,35 @@
 
 千葉工業大学の学食メニューを JSON で取得できる非公式 API です。
 
-CITサービスが公開している学食メニュー PDF を GitHub Actions で取得して解析し、API 用の JSON として Cloudflare Workers KV に保存します。
-API リクエストには、保存済み JSON を読み出して応答します。
+## 使い始める
+
+ブラウザで試す:
+
+https://cit-cafeteria-menu-api.miz77.workers.dev/api/v1/locations/tsudanuma/menus/today
+
+curl:
+
+```bash
+curl https://cit-cafeteria-menu-api.miz77.workers.dev/api/v1/locations/tsudanuma/menus/today
+```
+
+食堂 ID:
+
+```text
+tsudanuma
+shinnarashino-1f
+shinnarashino-2f
+```
+
+日付は `Asia/Tokyo` 基準です。
+
+表示には `location.menuItems` を使います。`location.status` が `ok` 以外の場合や `menuItems` が空の場合は、必要に応じて `location.menuText.lines` をフォールバックにしてください。
+
+詳しい仕様:
+
+- API リファレンス: https://cit-cafeteria-menu-api.miz77.workers.dev/docs
+- フィールド説明: [docs/api-guide.md](docs/api-guide.md)
+- OpenAPI: [docs/openapi.yaml](docs/openapi.yaml)
 
 ## 状態
 
@@ -24,31 +51,10 @@ GET /api/v1/health
 GET /api/v1/openapi.json
 ```
 
-食堂 ID:
-
-```text
-tsudanuma
-shinnarashino-1f
-shinnarashino-2f
-```
-
-`today` と `week` は `Asia/Tokyo` 基準です。
-
-## 使い始める
-
-津田沼の今日のメニュー:
-
-```text
-GET https://cit-cafeteria-menu-api.miz77.workers.dev/api/v1/locations/tsudanuma/menus/today
-```
-
-`location.status === "ok"` の食堂は、`location.menuItems` を表示します。
-`menuItems` が空なら、簡易表示やデバッグには `location.menuText.lines` を使います。
-
-レスポンス項目の意味は [docs/api-guide.md](docs/api-guide.md)、API 契約は [docs/openapi.yaml](docs/openapi.yaml) を参照してください。
-ブラウザでは `https://cit-cafeteria-menu-api.miz77.workers.dev/docs` から API リファレンスを確認できます。
-
 ## 構成
+
+CITサービスが公開している学食メニュー PDF を GitHub Actions で取得して解析し、API 用の JSON として Cloudflare Workers KV に保存します。
+API リクエストには、保存済み JSON を読み出して応答します。
 
 Cloudflare Worker は軽量に保っています。
 リクエストごとに対応する Workers KV のキーを読み、保存済み JSON 文字列を返します。
