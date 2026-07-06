@@ -9,6 +9,7 @@ import {
   generateStaticWrites,
   type KvWrite
 } from "./documents";
+import { fetchFailureSlug, INGEST_USER_AGENT, logFetchFailure } from "./fetchDiagnostics";
 import { type CloudflareKvConfig, uploadKvWrites } from "./kv";
 import { failedLocationResult, type LocationParseResult, parseLocationPdf } from "./parser";
 import { DEFAULT_PDF_LIMITS, extractTextItemsFromPdf, fetchPdf, PdfFetchError, type PdfLimits } from "./pdf";
@@ -104,11 +105,16 @@ export async function runIngest(options: RunIngestOptions = {}): Promise<{ write
 
 async function discoverSources(fetchImpl: typeof fetch) {
   try {
-    const response = await fetchImpl(SOURCE_PAGE_URL);
+    const response = await fetchImpl(SOURCE_PAGE_URL, {
+      headers: {
+        "user-agent": INGEST_USER_AGENT
+      }
+    });
     if (!response.ok) return fallbackSources(`source_page_http_${response.status}`);
     return discoverSourcesFromHtml(await response.text(), SOURCE_PAGE_URL);
   } catch (error) {
-    return fallbackSources(`source_page_fetch_failed_${error instanceof Error ? error.name : "unknown"}`);
+    const details = logFetchFailure("source_page", SOURCE_PAGE_URL, error);
+    return fallbackSources(`source_page_fetch_failed_${fetchFailureSlug(details)}`);
   }
 }
 

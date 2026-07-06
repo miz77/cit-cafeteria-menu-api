@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { LocationStatus } from "@cit-cafeteria/schema";
+import { fetchFailureSlug, formatFetchErrorDetails, INGEST_USER_AGENT, logFetchFailure } from "./fetchDiagnostics";
 import type { IngestSource } from "./sources";
 
 export interface PdfLimits {
@@ -58,11 +59,16 @@ export async function fetchPdf(
   limits: PdfLimits,
   fetchImpl: typeof fetch = fetch
 ): Promise<FetchedPdf> {
-  const response = await fetchImpl(source.pdfUrl, {
-    headers: {
-      "user-agent": "cit-cafeteria-menu-api/0.2 (+https://github.com/; unofficial)"
-    }
-  });
+  let response: Response;
+  try {
+    response = await fetchImpl(source.pdfUrl, {
+      headers: {
+        "user-agent": INGEST_USER_AGENT
+      }
+    });
+  } catch (error) {
+    throw fetchNetworkError(source.pdfUrl, "request", error);
+  }
 
   if (!response.ok) {
     throw new PdfFetchError(`Failed to fetch ${source.pdfUrl}: ${response.status}`, "fetch_failed");
@@ -75,7 +81,12 @@ export async function fetchPdf(
     ]);
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await response.arrayBuffer());
+  } catch (error) {
+    throw fetchNetworkError(source.pdfUrl, "body", error);
+  }
   if (bytes.byteLength > limits.hardMaxSourcePdfBytes) {
     throw new PdfFetchError(`Source PDF is too large: ${bytes.byteLength} bytes`, "source_too_large", [
       "source_pdf_hard_size_limit_exceeded"
@@ -94,6 +105,13 @@ export async function fetchPdf(
     sha256: createHash("sha256").update(bytes).digest("hex"),
     warnings
   };
+}
+
+function fetchNetworkError(url: string, stage: "request" | "body", error: unknown): PdfFetchError {
+  const details = logFetchFailure("pdf", url, error, stage);
+  return new PdfFetchError(`Failed to fetch ${url}: ${formatFetchErrorDetails(details)}`, "fetch_failed", [
+    `pdf_fetch_network_${fetchFailureSlug(details)}`
+  ]);
 }
 
 export async function extractTextItemsFromPdf(bytes: Uint8Array): Promise<PdfExtraction> {
