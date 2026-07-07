@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { generateHealthWrites, generateMenuDocuments, generateSourceWrites, generateStaticWrites } from "./documents";
 import { failedLocationResult, parseLocationPdf } from "./parser";
@@ -34,6 +35,23 @@ function parsed(locationId: "tsudanuma" | "shinnarashino-1f" | "shinnarashino-2f
     ]
   };
   return parseLocationPdf(pdf, extraction, DEFAULT_PDF_LIMITS, "2026-07-03");
+}
+
+function parsedFixture(
+  locationId: "tsudanuma" | "shinnarashino-1f" | "shinnarashino-2f",
+  fixtureName: string,
+  referenceDate: string
+) {
+  const ingestSource = source(locationId);
+  const pdf: FetchedPdf = {
+    source: ingestSource,
+    bytes: new Uint8Array([1]),
+    fetchedAt: "2026-07-03T00:00:00.000Z",
+    sha256: "a".repeat(64),
+    warnings: []
+  };
+  const extraction = JSON.parse(readFileSync(join(__dirname, "..", "fixtures", fixtureName), "utf8")) as PdfExtraction;
+  return parseLocationPdf(pdf, extraction, DEFAULT_PDF_LIMITS, referenceDate);
 }
 
 function documentedOpenApiPaths(): string[] {
@@ -78,6 +96,24 @@ describe("document generation", () => {
     expect(all.locations).toHaveLength(3);
     expect(all.locations[2].status).toBe("fetch_failed");
     expect(all.overallStatus).toBe("partial");
+  });
+
+  it("uses closed fallback for missing weekday columns with closed notices", () => {
+    const generated = generateMenuDocuments(
+      [
+        parsed("tsudanuma"),
+        parsedFixture("shinnarashino-1f", "shinnarashino-1f-20260706.json", "2026-07-07"),
+        parsedFixture("shinnarashino-2f", "shinnarashino-2f-20260706.json", "2026-07-07")
+      ],
+      "2026-07-07T00:00:00.000Z"
+    );
+
+    const saturdayWrite = generated.writes.find((write) => write.key === "menu:v1:date:2026-07-11:all");
+    expect(saturdayWrite).toBeDefined();
+    const saturday = JSON.parse(saturdayWrite?.value ?? "{}");
+    const secondFloor = saturday.locations.find((location: { id: string }) => location.id === "shinnarashino-2f");
+    expect(secondFloor.status).toBe("closed");
+    expect(secondFloor.statusMessage).toContain("土曜日休業");
   });
 
   it("generates static, source, and endpoint-ready health writes", () => {

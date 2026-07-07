@@ -5,7 +5,7 @@ import {
   type LocationMenu,
   type LocationStatus
 } from "@cit-cafeteria/schema";
-import { inferDateFromMonthDay } from "./dates";
+import { inferDateFromMonthDay, mondayWeekStart, parseDateOnly } from "./dates";
 import type { FetchedPdf, PdfExtraction, PdfLimits, PdfTextItem } from "./pdf";
 import type { IngestSource } from "./sources";
 import { type ColumnRow, structureMenuRows } from "./structure";
@@ -18,6 +18,7 @@ export interface LocationParseResult {
   statusMessage: string;
   warnings: string[];
   menusByDate: Map<string, LocationMenu>;
+  closedDates: Map<string, string>;
 }
 
 interface DateHeader {
@@ -67,6 +68,7 @@ export function parseLocationPdf(
 
   const menusByDate = new Map<string, LocationMenu>();
   const { columns, blockCount } = computeHeaderColumns(headers);
+  const closedDates = detectClosedDates(extraction.items, headers);
   if (blockCount > 1) {
     warnings.push("multi_block_layout_detected");
   }
@@ -113,7 +115,8 @@ export function parseLocationPdf(
     status: "ok",
     statusMessage: "Parsed PDF date columns.",
     warnings,
-    menusByDate
+    menusByDate,
+    closedDates
   };
 }
 
@@ -137,6 +140,17 @@ export function failedLocationResult(
 
 export function fallbackLocationMenu(result: LocationParseResult, date: string): LocationMenu {
   if (result.status === "ok") {
+    const closedReason = result.closedDates.get(date);
+    if (closedReason) {
+      return createEmptyLocationMenu(
+        result.locationId,
+        "closed",
+        `The source indicates this location is closed on ${date}: ${closedReason}.`,
+        result.sourceInfo,
+        result.warnings
+      );
+    }
+
     return createEmptyLocationMenu(
       result.locationId,
       "not_published",
@@ -169,7 +183,8 @@ function failedResult(
     status,
     statusMessage,
     warnings,
-    menusByDate: new Map()
+    menusByDate: new Map(),
+    closedDates: new Map()
   };
 }
 
@@ -222,6 +237,14 @@ function dateMatches(text: string): Array<{ month?: number; day: number }> {
     matches.push({
       month: Number(slashMatch[1]),
       day: Number(slashMatch[2])
+    });
+  }
+
+  const dayWithWeekdayPattern = /(?<![\d/])(\d{1,2})[（(][日月火水木金土][）)]/g;
+  let dayWithWeekdayMatch: RegExpExecArray | null;
+  while ((dayWithWeekdayMatch = dayWithWeekdayPattern.exec(text))) {
+    matches.push({
+      day: Number(dayWithWeekdayMatch[1])
     });
   }
 
@@ -362,8 +385,58 @@ function normalizeText(text: string): string {
 
 function statusForRawText(rawText: string | null): LocationStatus {
   if (!rawText) return "not_published";
-  if (/(休業|休み|閉店|定休日|closed)/i.test(rawText)) return "closed";
+  const statusText = rawText
+    .split("\n")
+    .filter((line) => !isWeekdayClosedNotice(line))
+    .join("\n");
+  if (/(休業|休み|閉店|定休日|closed)/i.test(statusText)) return "closed";
   return "ok";
+}
+
+const WEEKDAY_INDEX_BY_JA = new Map([
+  ["日", 0],
+  ["月", 1],
+  ["火", 2],
+  ["水", 3],
+  ["木", 4],
+  ["金", 5],
+  ["土", 6]
+]);
+
+function detectClosedDates(items: readonly PdfTextItem[], headers: readonly DateHeader[]): Map<string, string> {
+  const closedWeekdays = new Map<number, string>();
+  for (const item of items) {
+    const text = normalizeText(item.text);
+    const match = text.match(/^([日月火水木金土])曜日休業$/);
+    if (!match) continue;
+    const weekday = WEEKDAY_INDEX_BY_JA.get(match[1]);
+    if (weekday === undefined) continue;
+    closedWeekdays.set(weekday, text);
+  }
+
+  const closedDates = new Map<string, string>();
+  if (closedWeekdays.size === 0) return closedDates;
+
+  const headerDates = new Set(headers.map((header) => header.date));
+  const weekStarts = Array.from(new Set(headers.map((header) => mondayWeekStart(header.date))));
+  for (const weekStart of weekStarts) {
+    for (const [weekday, reason] of closedWeekdays) {
+      const date = dateForWeekday(weekStart, weekday);
+      if (!headerDates.has(date)) closedDates.set(date, reason);
+    }
+  }
+
+  return closedDates;
+}
+
+function dateForWeekday(weekStart: string, weekday: number): string {
+  const date = parseDateOnly(weekStart);
+  date.setUTCDate(date.getUTCDate() + ((weekday + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
+function isWeekdayClosedNotice(text: string): boolean {
+  return /^[日月火水木金土]曜日休業$/.test(normalizeText(text));
 }
 
 function statusMessageFor(status: LocationStatus): string {
@@ -393,5 +466,6 @@ export const __test__ = {
   extractColumnLines,
   extractColumnRows,
   dateMatches,
-  computeHeaderColumns
+  computeHeaderColumns,
+  statusForRawText
 };

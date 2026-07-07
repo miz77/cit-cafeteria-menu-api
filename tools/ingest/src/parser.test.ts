@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { __test__, parseLocationPdf } from "./parser";
+import { __test__, fallbackLocationMenu, parseLocationPdf } from "./parser";
 import { DEFAULT_PDF_LIMITS, type FetchedPdf, type PdfExtraction } from "./pdf";
 import type { IngestSource } from "./sources";
 
@@ -145,6 +145,12 @@ describe("simple PDF parser", () => {
     );
 
     expect(Array.from(result.menusByDate.keys())).toEqual(["2026-07-31", "2026-08-01"]);
+  });
+
+  it("detects day-with-weekday headers without duplicating slash or day headers", () => {
+    expect(__test__.dateMatches("10(金)")).toEqual([{ day: 10 }]);
+    expect(__test__.dateMatches("7/10(金)")).toEqual([{ month: 7, day: 10 }]);
+    expect(__test__.dateMatches("3日(金)")).toEqual([{ day: 3 }]);
   });
 
   it("splits date headers into blocks on a wide x gap", () => {
@@ -321,6 +327,20 @@ describe("simple PDF parser", () => {
     const menu = result.menusByDate.get("2026-07-06");
     expect(menu?.status).toBe("not_published");
     expect(menu?.menuItems).toEqual([]);
+  });
+
+  it("marks missing weekday fallback as closed when the PDF has a weekday closed notice", () => {
+    const result = parseLocationPdf(
+      fetchedPdf("shinnarashino-2f"),
+      loadFixture("shinnarashino-2f-20260706.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-07"
+    );
+
+    expect(result.menusByDate.has("2026-07-11")).toBe(false);
+    const fallback = fallbackLocationMenu(result, "2026-07-11");
+    expect(fallback.status).toBe("closed");
+    expect(fallback.statusMessage).toContain("土曜日休業");
   });
 });
 

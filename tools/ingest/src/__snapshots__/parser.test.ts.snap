@@ -4264,7 +4264,66 @@ exports[`parser output characterization snapshots > records current parser behav
   },
   {
     "date": "2026-07-08",
-    "menuItems": [],
+    "menuItems": [
+      {
+        "category": "unknown",
+        "categoryLabel": null,
+        "confidence": 0.6,
+        "name": "鶏肉飯風",
+        "nameLines": [
+          "鶏肉飯風",
+        ],
+        "priceText": "¥350",
+        "priceYen": 350,
+        "warnings": [
+          "category_unknown",
+        ],
+      },
+      {
+        "category": "unknown",
+        "categoryLabel": null,
+        "confidence": 0.6,
+        "name": "ケイジャンチキン",
+        "nameLines": [
+          "ケイジャンチキン",
+        ],
+        "priceText": "¥350",
+        "priceYen": 350,
+        "warnings": [
+          "category_unknown",
+        ],
+      },
+      {
+        "category": "unknown",
+        "categoryLabel": null,
+        "confidence": 0.6,
+        "name": "カルボナーラ",
+        "nameLines": [
+          "カルボナーラ",
+        ],
+        "priceText": "¥350",
+        "priceYen": 350,
+        "warnings": [
+          "category_unknown",
+        ],
+      },
+      {
+        "category": "unknown",
+        "categoryLabel": null,
+        "confidence": 0.6,
+        "name": "きんぴら¥ ミニサラダ¥",
+        "nameLines": [
+          "きんぴら¥",
+          "ミニサラダ¥",
+        ],
+        "priceText": null,
+        "priceYen": null,
+        "warnings": [
+          "price_not_found",
+          "category_unknown",
+        ],
+      },
+    ],
     "menuText": {
       "lines": [
         "鶏肉飯風",
@@ -4284,16 +4343,8 @@ exports[`parser output characterization snapshots > records current parser behav
     "parser": {
       "warnings": [],
     },
-    "status": "closed",
+    "status": "ok",
     "unassignedLines": [
-      "鶏肉飯風",
-      "¥350",
-      "ケイジャンチキン",
-      "¥350",
-      "カルボナーラ",
-      "¥350",
-      "きんぴら¥",
-      "ミニサラダ¥",
       "120",
       "営業時間",
       "10:30~14:00",
@@ -4383,6 +4434,91 @@ exports[`parser output characterization snapshots > records current parser behav
     "unassignedLines": [
       "50",
       "50",
+    ],
+  },
+  {
+    "date": "2026-07-10",
+    "menuItems": [
+      {
+        "category": "unknown",
+        "categoryLabel": null,
+        "confidence": 0.6,
+        "name": "ハッシュドビーフ",
+        "nameLines": [
+          "ハッシュドビーフ",
+        ],
+        "priceText": "¥400",
+        "priceYen": 400,
+        "warnings": [
+          "category_unknown",
+        ],
+      },
+      {
+        "category": "unknown",
+        "categoryLabel": null,
+        "confidence": 0.6,
+        "name": "スティックフライド チキン",
+        "nameLines": [
+          "スティックフライド",
+          "チキン",
+        ],
+        "priceText": "¥350",
+        "priceYen": 350,
+        "warnings": [
+          "category_unknown",
+        ],
+      },
+      {
+        "category": "unknown",
+        "categoryLabel": null,
+        "confidence": 0.6,
+        "name": "塩豚チーズ",
+        "nameLines": [
+          "塩豚チーズ",
+        ],
+        "priceText": "¥350",
+        "priceYen": 350,
+        "warnings": [
+          "category_unknown",
+        ],
+      },
+      {
+        "category": "unknown",
+        "categoryLabel": null,
+        "confidence": 0.6,
+        "name": "ポテト¥ コロッケ¥",
+        "nameLines": [
+          "ポテト¥",
+          "コロッケ¥",
+        ],
+        "priceText": null,
+        "priceYen": null,
+        "warnings": [
+          "price_not_found",
+          "category_unknown",
+        ],
+      },
+    ],
+    "menuText": {
+      "lines": [
+        "ハッシュドビーフ",
+        "¥400",
+        "スティックフライド",
+        "チキン",
+        "¥350",
+        "塩豚チーズ",
+        "¥350",
+        "ポテト¥",
+        "コロッケ¥",
+        "50 ~",
+      ],
+    },
+    "parser": {
+      "warnings": [],
+    },
+    "status": "ok",
+    "unassignedLines": [
+      "50 ~",
     ],
   },
 ]
