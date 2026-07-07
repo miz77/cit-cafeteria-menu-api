@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { __test__, parseLocationPdf } from "./parser";
+import { __test__, fallbackLocationMenu, parseLocationPdf } from "./parser";
 import { DEFAULT_PDF_LIMITS, type FetchedPdf, type PdfExtraction } from "./pdf";
 import type { IngestSource } from "./sources";
 
@@ -29,6 +29,74 @@ function fetchedPdf(locationId: IngestSource["locationId"] = "tsudanuma"): Fetch
     warnings: []
   };
 }
+
+function parserCharacterizationSnapshot(result: ReturnType<typeof parseLocationPdf>) {
+  return Array.from(result.menusByDate.entries()).map(([date, menu]) => ({
+    date,
+    status: menu.status,
+    menuText: {
+      lines: menu.menuText.lines
+    },
+    menuItems: menu.menuItems,
+    unassignedLines: menu.unassignedLines,
+    parser: {
+      warnings: menu.parser.warnings
+    }
+  }));
+}
+
+const tsudanumaCharacterizationFixtures = [
+  {
+    name: "tsudanuma-single-block",
+    fixture: "tsudanuma-single-block.json",
+    referenceDate: "2026-07-03"
+  },
+  {
+    name: "tsudanuma-two-block",
+    fixture: "tsudanuma-two-block.json",
+    referenceDate: "2026-07-03"
+  }
+] as const;
+
+const shinnarashinoLegacyBehaviorFixtures = [
+  {
+    name: "shinnarashino-1f-single-block",
+    locationId: "shinnarashino-1f",
+    fixture: "shinnarashino-1f-single-block.json",
+    referenceDate: "2026-07-03"
+  },
+  {
+    name: "shinnarashino-2f-single-block",
+    locationId: "shinnarashino-2f",
+    fixture: "shinnarashino-2f-single-block.json",
+    referenceDate: "2026-07-03"
+  }
+] as const satisfies ReadonlyArray<{
+  name: string;
+  locationId: IngestSource["locationId"];
+  fixture: string;
+  referenceDate: string;
+}>;
+
+const shinnarashinoIntendedOutputFixtures = [
+  {
+    name: "shinnarashino-1f-20260706",
+    locationId: "shinnarashino-1f",
+    fixture: "shinnarashino-1f-20260706.json",
+    referenceDate: "2026-07-07"
+  },
+  {
+    name: "shinnarashino-2f-20260706",
+    locationId: "shinnarashino-2f",
+    fixture: "shinnarashino-2f-20260706.json",
+    referenceDate: "2026-07-07"
+  }
+] as const satisfies ReadonlyArray<{
+  name: string;
+  locationId: IngestSource["locationId"];
+  fixture: string;
+  referenceDate: string;
+}>;
 
 describe("simple PDF parser", () => {
   it("extracts raw text by date column", () => {
@@ -85,6 +153,12 @@ describe("simple PDF parser", () => {
     );
 
     expect(Array.from(result.menusByDate.keys())).toEqual(["2026-07-31", "2026-08-01"]);
+  });
+
+  it("detects day-with-weekday headers without duplicating slash or day headers", () => {
+    expect(__test__.dateMatches("10(金)")).toEqual([{ day: 10 }]);
+    expect(__test__.dateMatches("7/10(金)")).toEqual([{ month: 7, day: 10 }]);
+    expect(__test__.dateMatches("3日(金)")).toEqual([{ day: 3 }]);
   });
 
   it("splits date headers into blocks on a wide x gap", () => {
@@ -218,32 +292,50 @@ describe("simple PDF parser", () => {
     expect(wednesday?.unassignedLines).not.toContain("¥350");
   });
 
-  it("structures New Narashino price rows conservatively", () => {
+  it("structures current New Narashino fixtures without the known high-confidence false items", () => {
     const firstFloor = parseLocationPdf(
       fetchedPdf("shinnarashino-1f"),
-      loadFixture("shinnarashino-1f-single-block.json"),
+      loadFixture("shinnarashino-1f-20260706.json"),
       DEFAULT_PDF_LIMITS,
-      "2026-07-03"
+      "2026-07-07"
     );
     const secondFloor = parseLocationPdf(
       fetchedPdf("shinnarashino-2f"),
-      loadFixture("shinnarashino-2f-single-block.json"),
+      loadFixture("shinnarashino-2f-20260706.json"),
       DEFAULT_PDF_LIMITS,
-      "2026-07-03"
+      "2026-07-07"
     );
 
-    const secondFloorItems = Array.from(secondFloor.menusByDate.values()).flatMap((menu) => menu.menuItems);
-    expect(secondFloorItems.length).toBeGreaterThan(0);
-    expect(secondFloorItems.every((item) => item.priceYen !== null)).toBe(true);
+    const firstFloorMonday = firstFloor.menusByDate.get("2026-07-06");
+    expect(firstFloorMonday?.menuItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "asa_teishoku", name: "れんこん 海老はさみ揚", priceYen: 300 }),
+        expect.objectContaining({ category: "teishoku", name: "カキフライ", priceYen: 400 }),
+        expect.objectContaining({ category: "teishoku", name: "温玉のせ 豚キムチ丼", priceYen: 350 }),
+        expect.objectContaining({ category: "curry", name: "カレー", priceYen: 250 }),
+        expect.objectContaining({ category: "side_dish", name: "コロッケ", priceYen: 50 })
+      ])
+    );
+    expect(firstFloorMonday?.menuItems.map((item) => item.name)).not.toContain("大盛カレー");
 
-    const firstFloorPriceMissing = Array.from(firstFloor.menusByDate.values())
-      .flatMap((menu) => menu.menuItems)
-      .filter((item) => item.priceYen === null);
-    expect(firstFloorPriceMissing.length).toBeGreaterThan(0);
-    expect(firstFloorPriceMissing.every((item) => item.warnings.includes("price_not_found"))).toBe(true);
-    expect(
-      Array.from(firstFloor.menusByDate.values()).some((menu) => menu.unassignedLines.includes("大盛販売ありません"))
-    ).toBe(true);
+    const firstFloorSaturday = firstFloor.menusByDate.get("2026-07-11");
+    expect(firstFloorSaturday?.status).toBe("not_published");
+    expect(firstFloorSaturday?.menuItems).toEqual([]);
+    expect(firstFloorSaturday?.menuItems.map((item) => item.name)).not.toContain("営業中");
+
+    const secondFloorFriday = secondFloor.menusByDate.get("2026-07-10");
+    expect(secondFloorFriday?.menuItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "donburi", name: "ハッシュドビーフ", priceYen: 400 }),
+        expect.objectContaining({ category: "curry", name: "スティックフライド チキン", priceYen: 350 }),
+        expect.objectContaining({ category: "keishoku_pasta", name: "塩豚チーズ", priceYen: 350 }),
+        expect.objectContaining({ category: "side_dish", name: "ポテト", priceYen: 100 })
+      ])
+    );
+    expect(secondFloorFriday?.menuItems.some((item) => item.category === "unknown")).toBe(false);
+    expect(secondFloorFriday?.menuItems.map((item) => item.name)).not.toEqual(
+      expect.arrayContaining(["ホームパン¥", "2F食堂"])
+    );
   });
 
   it("does not structure menuItems for non-ok location days", () => {
@@ -262,4 +354,83 @@ describe("simple PDF parser", () => {
     expect(menu?.status).toBe("not_published");
     expect(menu?.menuItems).toEqual([]);
   });
+
+  it("marks missing weekday fallback as closed when the PDF has a weekday closed notice", () => {
+    const result = parseLocationPdf(
+      fetchedPdf("shinnarashino-2f"),
+      loadFixture("shinnarashino-2f-20260706.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-07"
+    );
+
+    expect(result.menusByDate.has("2026-07-11")).toBe(false);
+    const fallback = fallbackLocationMenu(result, "2026-07-11");
+    expect(fallback.status).toBe("closed");
+    expect(fallback.statusMessage).toContain("土曜日休業");
+  });
+
+  it("warns when New Narashino profile rows are not detected", () => {
+    const firstFloor = parseLocationPdf(
+      fetchedPdf("shinnarashino-1f"),
+      loadFixture("shinnarashino-1f-single-block.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+    const secondFloor = parseLocationPdf(
+      fetchedPdf("shinnarashino-2f"),
+      loadFixture("shinnarashino-2f-single-block.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    expect(firstFloor.warnings).toEqual(
+      expect.arrayContaining([
+        "profile_rows_not_detected:shared:curry",
+        "profile_rows_not_detected:shared:side_dish",
+        "profile_rows_not_detected:daily:men_corner"
+      ])
+    );
+    expect(secondFloor.warnings).toContain("profile_rows_not_detected:shared:side_dish");
+  });
+});
+
+describe("parser output characterization snapshots", () => {
+  for (const fixture of tsudanumaCharacterizationFixtures) {
+    it(`keeps Tsudanuma golden output for ${fixture.name}`, () => {
+      const result = parseLocationPdf(
+        fetchedPdf("tsudanuma"),
+        loadFixture(fixture.fixture),
+        DEFAULT_PDF_LIMITS,
+        fixture.referenceDate
+      );
+
+      expect(parserCharacterizationSnapshot(result)).toMatchSnapshot();
+    });
+  }
+
+  for (const fixture of shinnarashinoLegacyBehaviorFixtures) {
+    it(`records current parser behavior for ${fixture.name}`, () => {
+      const result = parseLocationPdf(
+        fetchedPdf(fixture.locationId),
+        loadFixture(fixture.fixture),
+        DEFAULT_PDF_LIMITS,
+        fixture.referenceDate
+      );
+
+      expect(parserCharacterizationSnapshot(result)).toMatchSnapshot();
+    });
+  }
+
+  for (const fixture of shinnarashinoIntendedOutputFixtures) {
+    it(`keeps intended Shin-Narashino output for ${fixture.name}`, () => {
+      const result = parseLocationPdf(
+        fetchedPdf(fixture.locationId),
+        loadFixture(fixture.fixture),
+        DEFAULT_PDF_LIMITS,
+        fixture.referenceDate
+      );
+
+      expect(parserCharacterizationSnapshot(result)).toMatchSnapshot();
+    });
+  }
 });

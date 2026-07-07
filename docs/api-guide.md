@@ -75,8 +75,9 @@ if (location.status !== "ok") {
 
 ```swift
 enum MenuCategory: Codable, Equatable {
-    case asaTeishoku, koudaiTeishoku, yuTeishoku
-    case higawariSalad, gourmetCurry, menCorner, keishokuPasta
+    case asaTeishoku, koudaiTeishoku, yuTeishoku, teishoku
+    case higawariSalad, gourmetCurry, donburi, curry
+    case menCorner, keishokuPasta, sideDish
     case unknown(String)
 
     init(from decoder: Decoder) throws {
@@ -85,10 +86,14 @@ enum MenuCategory: Codable, Equatable {
         case "asa_teishoku": self = .asaTeishoku
         case "koudai_teishoku": self = .koudaiTeishoku
         case "yu_teishoku": self = .yuTeishoku
+        case "teishoku": self = .teishoku
         case "higawari_salad": self = .higawariSalad
         case "gourmet_curry": self = .gourmetCurry
+        case "donburi": self = .donburi
+        case "curry": self = .curry
         case "men_corner": self = .menCorner
         case "keishoku_pasta": self = .keishokuPasta
+        case "side_dish": self = .sideDish
         default: self = .unknown(raw)
         }
     }
