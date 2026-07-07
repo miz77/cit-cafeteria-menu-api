@@ -44,10 +44,14 @@
         "asa_teishoku",
         "koudai_teishoku",
         "yu_teishoku",
+        "teishoku",
         "higawari_salad",
         "gourmet_curry",
+        "donburi",
+        "curry",
         "men_corner",
         "keishoku_pasta",
+        "side_dish",
         "unknown"
       ]
     },

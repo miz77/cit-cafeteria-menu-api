@@ -25,6 +25,26 @@ interface LabelAnchor {
   warnings: MenuItemWarning[];
 }
 
+export interface CategoryLabelRule {
+  pattern: RegExp;
+  category: MenuCategory;
+  label: string;
+}
+
+export interface StructureProfile {
+  categoryByLabel: readonly CategoryLabelRule[];
+  metaLinePatterns: readonly RegExp[];
+  markerNameMaxGap: number;
+  labelPriceMaxGap: number;
+  labelMaxNameAbove: number;
+  labelMaxNameDepth: number;
+  labelBandTolerance: number;
+  labelBandBoundary: "price-row" | "label";
+  clearPriceWarningsWhenCellPriceFound: boolean;
+  priceBlockMaxGap: number;
+  noPriceBlockGap: number;
+}
+
 const MARKER_NAME_MAX_GAP = 25;
 const LABEL_PRICE_MAX_GAP = 25;
 const LABEL_MAX_NAME_ABOVE = 25;
@@ -38,7 +58,7 @@ const PRICE_ONLY_PATTERN = /^¥\s*\d+$/;
 const PRICE_PATTERN = /(?:¥|\\)\s*(\d{2,5})/;
 const RAMEN_CONTEXT_NAMES = new Set(["味噌", "塩", "醤油", "とんこつ"]);
 
-const CATEGORY_BY_LABEL: Array<{ pattern: RegExp; category: MenuCategory; label: string }> = [
+const CATEGORY_BY_LABEL: CategoryLabelRule[] = [
   { pattern: /^朝定食$/, category: "asa_teishoku", label: "朝定食" },
   { pattern: /^夕定食$/, category: "yu_teishoku", label: "夕定食" },
   { pattern: /^日替りサラダ$/, category: "higawari_salad", label: "日替りサラダ" },
@@ -50,9 +70,31 @@ const CATEGORY_BY_LABEL: Array<{ pattern: RegExp; category: MenuCategory; label:
   { pattern: /^今週のパスタ$/, category: "keishoku_pasta", label: "今週のパスタ" }
 ];
 
+const DEFAULT_META_LINE_PATTERNS = [
+  /(?:https?:\/\/|CIT学食|シー・アイ・ティ・サービス|都合により|検索できます|学食券|変則的|営業時間|大盛販売ありません)/,
+  /^<営業時間>$/,
+  /^(?:昼・夕定食|朝定食\s+\d|麺・軽食|土曜日|\*土曜日\*)/,
+  /^[\d\s:：~～()（）]+$/
+] as const;
+
+export const DEFAULT_STRUCTURE_PROFILE: StructureProfile = {
+  categoryByLabel: CATEGORY_BY_LABEL,
+  metaLinePatterns: DEFAULT_META_LINE_PATTERNS,
+  markerNameMaxGap: MARKER_NAME_MAX_GAP,
+  labelPriceMaxGap: LABEL_PRICE_MAX_GAP,
+  labelMaxNameAbove: LABEL_MAX_NAME_ABOVE,
+  labelMaxNameDepth: LABEL_MAX_NAME_DEPTH,
+  labelBandTolerance: LABEL_BAND_TOLERANCE,
+  labelBandBoundary: "price-row",
+  clearPriceWarningsWhenCellPriceFound: false,
+  priceBlockMaxGap: PRICE_BLOCK_MAX_GAP,
+  noPriceBlockGap: NO_PRICE_BLOCK_GAP
+};
+
 export function structureMenuRows(
   rows: readonly ColumnRow[],
-  labelRows: readonly ColumnRow[] = []
+  labelRows: readonly ColumnRow[] = [],
+  profile: StructureProfile = DEFAULT_STRUCTURE_PROFILE
 ): StructuredMenuRows {
   const workingRows = rows.map((row, index) => ({
     ...row,
@@ -63,15 +105,15 @@ export function structureMenuRows(
   const used = new Set<number>();
   const menuItems: MenuItem[] = [];
 
-  menuItems.push(...structureKoudaiMarkerItems(workingRows, used));
+  menuItems.push(...structureKoudaiMarkerItems(workingRows, used, profile));
 
-  const anchors = buildLabelAnchors(labelRows);
+  const anchors = buildLabelAnchors(labelRows, profile);
   if (anchors.length > 0) {
-    menuItems.push(...structureLabelBandItems(workingRows, anchors, used));
+    menuItems.push(...structureLabelBandItems(workingRows, anchors, used, profile));
   }
 
-  menuItems.push(...structurePriceFallbackItems(workingRows, used));
-  menuItems.push(...structureNoPriceFallbackItems(workingRows, used));
+  menuItems.push(...structurePriceFallbackItems(workingRows, used, profile));
+  menuItems.push(...structureNoPriceFallbackItems(workingRows, used, profile));
 
   return {
     menuItems,
@@ -82,7 +124,11 @@ export function structureMenuRows(
   };
 }
 
-function structureKoudaiMarkerItems(rows: readonly WorkingRow[], used: Set<number>): MenuItem[] {
+function structureKoudaiMarkerItems(
+  rows: readonly WorkingRow[],
+  used: Set<number>,
+  profile: StructureProfile
+): MenuItem[] {
   const menuItems: MenuItem[] = [];
 
   for (let index = 0; index < rows.length; index += 1) {
@@ -96,14 +142,14 @@ function structureKoudaiMarkerItems(rows: readonly WorkingRow[], used: Set<numbe
     for (let nextIndex = index + 1; nextIndex < rows.length; nextIndex += 1) {
       const candidate = rows[nextIndex];
       if (candidate.text.match(KOUDAI_MARKER_PATTERN)) break;
-      if (previousY - candidate.y > MARKER_NAME_MAX_GAP) break;
+      if (previousY - candidate.y > profile.markerNameMaxGap) break;
       previousY = candidate.y;
 
       if (isDiscardedLine(candidate.text)) {
         used.add(candidate.index);
         continue;
       }
-      if (!isNameCandidate(candidate.text)) break;
+      if (!isNameCandidate(candidate.text, profile)) break;
       nameRows.push(candidate);
     }
 
@@ -131,7 +177,8 @@ function structureKoudaiMarkerItems(rows: readonly WorkingRow[], used: Set<numbe
 function structureLabelBandItems(
   rows: readonly WorkingRow[],
   anchors: readonly LabelAnchor[],
-  used: Set<number>
+  used: Set<number>,
+  profile: StructureProfile
 ): MenuItem[] {
   const menuItems: MenuItem[] = [];
 
@@ -140,23 +187,31 @@ function structureLabelBandItems(
     const previousAnchor = index === 0 ? null : anchors[index - 1];
     const nextAnchor = index === anchors.length - 1 ? null : anchors[index + 1];
     const upper = previousAnchor
-      ? midpoint(previousAnchor.priceRowY ?? previousAnchor.y, anchor.y)
+      ? midpoint(labelBandBoundaryY(previousAnchor, profile), anchor.y)
       : Number.POSITIVE_INFINITY;
-    const lower = nextAnchor ? midpoint(anchor.priceRowY ?? anchor.y, nextAnchor.y) : Number.NEGATIVE_INFINITY;
+    const lower = nextAnchor ? midpoint(labelBandBoundaryY(anchor, profile), nextAnchor.y) : Number.NEGATIVE_INFINITY;
 
     const nameRows = rows.filter(
-      (row) => !used.has(row.index) && isNameCandidate(row.text) && isInsideLabelBand(row, anchor, upper, lower)
+      (row) =>
+        !used.has(row.index) &&
+        isNameCandidate(row.text, profile) &&
+        isInsideLabelBand(row, anchor, upper, lower, profile)
     );
 
     if (nameRows.length === 0) continue;
 
     const cellPriceRow = rows.find(
-      (row) => !used.has(row.index) && isPriceOnlyLine(row.text) && isInsideLabelBand(row, anchor, upper, lower)
+      (row) =>
+        !used.has(row.index) && isPriceOnlyLine(row.text) && isInsideLabelBand(row, anchor, upper, lower, profile)
     );
     const cellPrice = cellPriceRow ? parsePrice(cellPriceRow.text) : null;
 
     for (const row of nameRows) used.add(row.index);
     if (cellPriceRow) used.add(cellPriceRow.index);
+    const warnings =
+      profile.clearPriceWarningsWhenCellPriceFound && cellPrice
+        ? anchor.warnings.filter((warning) => warning !== "price_not_found")
+        : anchor.warnings;
     menuItems.push(
       menuItem({
         nameLines: nameRows.map((row) => row.text),
@@ -165,7 +220,7 @@ function structureLabelBandItems(
         priceYen: cellPrice?.priceYen ?? anchor.priceYen,
         priceText: cellPrice?.priceText ?? anchor.priceText,
         confidence: 0.9,
-        warnings: anchor.warnings
+        warnings
       })
     );
   }
@@ -173,22 +228,36 @@ function structureLabelBandItems(
   return menuItems;
 }
 
-function isInsideLabelBand(row: WorkingRow, anchor: LabelAnchor, upper: number, lower: number): boolean {
-  if (row.y > upper + LABEL_BAND_TOLERANCE || row.y <= lower - LABEL_BAND_TOLERANCE) return false;
-  if (row.y > anchor.y + LABEL_MAX_NAME_ABOVE) return false;
-  if (row.y < anchor.y - LABEL_MAX_NAME_DEPTH) return false;
+function labelBandBoundaryY(anchor: LabelAnchor, profile: StructureProfile): number {
+  return profile.labelBandBoundary === "label" ? anchor.y : (anchor.priceRowY ?? anchor.y);
+}
+
+function isInsideLabelBand(
+  row: WorkingRow,
+  anchor: LabelAnchor,
+  upper: number,
+  lower: number,
+  profile: StructureProfile
+): boolean {
+  if (row.y > upper + profile.labelBandTolerance || row.y <= lower - profile.labelBandTolerance) return false;
+  if (row.y > anchor.y + profile.labelMaxNameAbove) return false;
+  if (row.y < anchor.y - profile.labelMaxNameDepth) return false;
   return true;
 }
 
-function structurePriceFallbackItems(rows: readonly WorkingRow[], used: Set<number>): MenuItem[] {
+function structurePriceFallbackItems(
+  rows: readonly WorkingRow[],
+  used: Set<number>,
+  profile: StructureProfile
+): MenuItem[] {
   const menuItems: MenuItem[] = [];
 
   for (let index = 0; index < rows.length; index += 1) {
     const priceRow = rows[index];
     if (used.has(priceRow.index) || !isPriceOnlyLine(priceRow.text)) continue;
 
-    const upperNameRows = collectAdjacentNameRows(rows, used, index, -1);
-    const lowerNameRows = collectAdjacentNameRows(rows, used, index, 1);
+    const upperNameRows = collectAdjacentNameRows(rows, used, index, -1, profile);
+    const lowerNameRows = collectAdjacentNameRows(rows, used, index, 1, profile);
     const nameRows = sortTopToBottom(uniqueRows(upperNameRows.length > 0 ? upperNameRows : lowerNameRows));
     if (nameRows.length === 0) continue;
 
@@ -210,13 +279,17 @@ function structurePriceFallbackItems(rows: readonly WorkingRow[], used: Set<numb
   return menuItems;
 }
 
-function structureNoPriceFallbackItems(rows: readonly WorkingRow[], used: Set<number>): MenuItem[] {
+function structureNoPriceFallbackItems(
+  rows: readonly WorkingRow[],
+  used: Set<number>,
+  profile: StructureProfile
+): MenuItem[] {
   const menuItems: MenuItem[] = [];
   let current: WorkingRow[] = [];
 
   const flush = () => {
     if (current.length === 0) return;
-    const nameRows = current.filter((row) => isNameCandidate(row.text));
+    const nameRows = current.filter((row) => isNameCandidate(row.text, profile));
     current = [];
     if (nameRows.length === 0 || !hasMeaningfulName(nameRows)) return;
 
@@ -235,13 +308,13 @@ function structureNoPriceFallbackItems(rows: readonly WorkingRow[], used: Set<nu
   };
 
   for (const row of rows) {
-    if (used.has(row.index) || isDiscardedLine(row.text) || !isNameCandidate(row.text)) {
+    if (used.has(row.index) || isDiscardedLine(row.text) || !isNameCandidate(row.text, profile)) {
       flush();
       continue;
     }
 
     const previous = current.at(-1);
-    if (previous && previous.y - row.y >= NO_PRICE_BLOCK_GAP) flush();
+    if (previous && previous.y - row.y >= profile.noPriceBlockGap) flush();
     current.push(row);
   }
   flush();
@@ -253,7 +326,8 @@ function collectAdjacentNameRows(
   rows: readonly WorkingRow[],
   used: ReadonlySet<number>,
   priceIndex: number,
-  direction: -1 | 1
+  direction: -1 | 1,
+  profile: StructureProfile
 ): WorkingRow[] {
   const collected: WorkingRow[] = [];
   let previousY = rows[priceIndex].y;
@@ -261,19 +335,19 @@ function collectAdjacentNameRows(
   for (let index = priceIndex + direction; index >= 0 && index < rows.length; index += direction) {
     const row = rows[index];
     const gap = direction === -1 ? row.y - previousY : previousY - row.y;
-    if (gap > PRICE_BLOCK_MAX_GAP) break;
+    if (gap > profile.priceBlockMaxGap) break;
     previousY = row.y;
 
     if (used.has(row.index) || isPriceOnlyLine(row.text) || row.text.match(KOUDAI_MARKER_PATTERN)) break;
-    if (isDiscardedLine(row.text) || isMetaLine(row.text)) continue;
-    if (!isNameCandidate(row.text)) break;
+    if (isDiscardedLine(row.text) || isMetaLine(row.text, profile)) continue;
+    if (!isNameCandidate(row.text, profile)) break;
     collected.push(row);
   }
 
   return collected;
 }
 
-function buildLabelAnchors(labelRows: readonly ColumnRow[]): LabelAnchor[] {
+function buildLabelAnchors(labelRows: readonly ColumnRow[], profile: StructureProfile): LabelAnchor[] {
   const rows = labelRows
     .map((row) => ({
       ...row,
@@ -285,14 +359,19 @@ function buildLabelAnchors(labelRows: readonly ColumnRow[]): LabelAnchor[] {
 
   const anchors: LabelAnchor[] = [];
   for (const row of rows) {
-    if (isDiscardedLine(row.text) || isMetaLine(row.text) || isPriceOnlyLine(row.text) || isSectionHeader(row.text)) {
+    if (
+      isDiscardedLine(row.text) ||
+      isMetaLine(row.text, profile) ||
+      isPriceOnlyLine(row.text) ||
+      isSectionHeader(row.text)
+    ) {
       continue;
     }
 
     const label = cleanLabel(row.text);
-    const category = categoryForLabel(label);
+    const category = categoryForLabel(label, profile);
     const inlinePrice = parsePrice(row.text);
-    const nearbyPrice = inlinePrice ?? findNearbyPrice(row, rows);
+    const nearbyPrice = inlinePrice ?? findNearbyPrice(row, rows, profile);
     if (!category && !nearbyPrice) continue;
 
     const warnings: MenuItemWarning[] = [];
@@ -313,9 +392,10 @@ function buildLabelAnchors(labelRows: readonly ColumnRow[]): LabelAnchor[] {
   return anchors;
 }
 
-function findNearbyPrice(row: ColumnRow, rows: readonly ColumnRow[]) {
+function findNearbyPrice(row: ColumnRow, rows: readonly ColumnRow[], profile: StructureProfile) {
   const priceRow = rows.find(
-    (candidate) => candidate.y < row.y && row.y - candidate.y <= LABEL_PRICE_MAX_GAP && isPriceOnlyLine(candidate.text)
+    (candidate) =>
+      candidate.y < row.y && row.y - candidate.y <= profile.labelPriceMaxGap && isPriceOnlyLine(candidate.text)
   );
   if (!priceRow) return null;
   const price = parsePrice(priceRow.text);
@@ -332,8 +412,8 @@ function parsePrice(text: string): { priceYen: number; priceText: string; rowY?:
   };
 }
 
-function categoryForLabel(label: string): { category: MenuCategory; label: string } | null {
-  return CATEGORY_BY_LABEL.find((item) => item.pattern.test(label)) ?? null;
+function categoryForLabel(label: string, profile: StructureProfile): { category: MenuCategory; label: string } | null {
+  return profile.categoryByLabel.find((item) => item.pattern.test(label)) ?? null;
 }
 
 function cleanLabel(text: string): string {
@@ -384,12 +464,12 @@ function isSectionHeader(text: string): boolean {
   return /^<.+コーナー>$/.test(normalizeText(text));
 }
 
-function isNameCandidate(text: string): boolean {
+function isNameCandidate(text: string, profile: StructureProfile): boolean {
   const normalized = normalizeText(text);
   return (
     !!normalized &&
     !isDiscardedLine(normalized) &&
-    !isMetaLine(normalized) &&
+    !isMetaLine(normalized, profile) &&
     !isPriceOnlyLine(normalized) &&
     !normalized.match(KOUDAI_MARKER_PATTERN)
   );
@@ -399,16 +479,9 @@ function isDiscardedLine(text: string): boolean {
   return /^ご飯[・･]みそ汁付$/.test(normalizeText(text));
 }
 
-function isMetaLine(text: string): boolean {
+function isMetaLine(text: string, profile: StructureProfile): boolean {
   const normalized = normalizeText(text);
-  return (
-    /(?:https?:\/\/|CIT学食|シー・アイ・ティ・サービス|都合により|検索できます|学食券|変則的|営業時間|大盛販売ありません)/.test(
-      normalized
-    ) ||
-    /^<営業時間>$/.test(normalized) ||
-    /^(?:昼・夕定食|朝定食\s+\d|麺・軽食|土曜日|\*土曜日\*)/.test(normalized) ||
-    /^[\d\s:：~～()（）]+$/.test(normalized)
-  );
+  return profile.metaLinePatterns.some((pattern) => pattern.test(normalized));
 }
 
 function hasMeaningfulName(rows: readonly WorkingRow[]): boolean {

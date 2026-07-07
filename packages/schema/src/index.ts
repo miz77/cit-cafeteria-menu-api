@@ -117,10 +117,14 @@ export type MenuCategory =
   | "asa_teishoku"
   | "koudai_teishoku"
   | "yu_teishoku"
+  | "teishoku"
   | "higawari_salad"
   | "gourmet_curry"
+  | "donburi"
+  | "curry"
   | "men_corner"
   | "keishoku_pasta"
+  | "side_dish"
   | "unknown";
 
 export type MenuItemWarning = "price_not_found" | "category_unknown" | "name_may_be_incomplete";
@@ -410,10 +414,14 @@ const MENU_CATEGORIES = [
   "asa_teishoku",
   "koudai_teishoku",
   "yu_teishoku",
+  "teishoku",
   "higawari_salad",
   "gourmet_curry",
+  "donburi",
+  "curry",
   "men_corner",
   "keishoku_pasta",
+  "side_dish",
   "unknown"
 ] as const satisfies readonly MenuCategory[];
 
