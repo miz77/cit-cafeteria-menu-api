@@ -30,6 +30,66 @@ function fetchedPdf(locationId: IngestSource["locationId"] = "tsudanuma"): Fetch
   };
 }
 
+function parserCharacterizationSnapshot(result: ReturnType<typeof parseLocationPdf>) {
+  return Array.from(result.menusByDate.entries()).map(([date, menu]) => ({
+    date,
+    status: menu.status,
+    menuText: {
+      lines: menu.menuText.lines
+    },
+    menuItems: menu.menuItems,
+    unassignedLines: menu.unassignedLines,
+    parser: {
+      warnings: menu.parser.warnings
+    }
+  }));
+}
+
+const tsudanumaCharacterizationFixtures = [
+  {
+    name: "tsudanuma-single-block",
+    fixture: "tsudanuma-single-block.json",
+    referenceDate: "2026-07-03"
+  },
+  {
+    name: "tsudanuma-two-block",
+    fixture: "tsudanuma-two-block.json",
+    referenceDate: "2026-07-03"
+  }
+] as const;
+
+const shinnarashinoCurrentBehaviorFixtures = [
+  {
+    name: "shinnarashino-1f-single-block",
+    locationId: "shinnarashino-1f",
+    fixture: "shinnarashino-1f-single-block.json",
+    referenceDate: "2026-07-03"
+  },
+  {
+    name: "shinnarashino-2f-single-block",
+    locationId: "shinnarashino-2f",
+    fixture: "shinnarashino-2f-single-block.json",
+    referenceDate: "2026-07-03"
+  },
+  {
+    name: "shinnarashino-1f-20260706",
+    locationId: "shinnarashino-1f",
+    fixture: "shinnarashino-1f-20260706.json",
+    referenceDate: "2026-07-07"
+  },
+  {
+    name: "shinnarashino-2f-20260706",
+    locationId: "shinnarashino-2f",
+    fixture: "shinnarashino-2f-20260706.json",
+    referenceDate: "2026-07-07"
+  }
+] as const satisfies ReadonlyArray<{
+  name: string;
+  locationId: IngestSource["locationId"];
+  fixture: string;
+  referenceDate: string;
+}>;
+
 describe("simple PDF parser", () => {
   it("extracts raw text by date column", () => {
     const extraction: PdfExtraction = {
@@ -262,4 +322,32 @@ describe("simple PDF parser", () => {
     expect(menu?.status).toBe("not_published");
     expect(menu?.menuItems).toEqual([]);
   });
+});
+
+describe("parser output characterization snapshots", () => {
+  for (const fixture of tsudanumaCharacterizationFixtures) {
+    it(`keeps Tsudanuma golden output for ${fixture.name}`, () => {
+      const result = parseLocationPdf(
+        fetchedPdf("tsudanuma"),
+        loadFixture(fixture.fixture),
+        DEFAULT_PDF_LIMITS,
+        fixture.referenceDate
+      );
+
+      expect(parserCharacterizationSnapshot(result)).toMatchSnapshot();
+    });
+  }
+
+  for (const fixture of shinnarashinoCurrentBehaviorFixtures) {
+    it(`records current parser behavior for ${fixture.name}`, () => {
+      const result = parseLocationPdf(
+        fetchedPdf(fixture.locationId),
+        loadFixture(fixture.fixture),
+        DEFAULT_PDF_LIMITS,
+        fixture.referenceDate
+      );
+
+      expect(parserCharacterizationSnapshot(result)).toMatchSnapshot();
+    });
+  }
 });
