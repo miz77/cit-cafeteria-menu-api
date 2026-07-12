@@ -492,6 +492,35 @@ describe("simple PDF parser", () => {
     );
   });
 
+  it("keeps recovered edge glyphs without rewriting unrelated menu text", () => {
+    const result = parseLocationPdf(
+      fetchedPdf("shinnarashino-1f"),
+      loadFixture("shinnarashino-1f-20260713.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    const tuesday = result.menusByDate.get("2026-07-14");
+    expect(tuesday?.menuItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "teishoku",
+          name: "ミックスフライ 白身フライ・エビフライ・チキンカツ",
+          priceYen: 350
+        })
+      ])
+    );
+
+    const wednesday = result.menusByDate.get("2026-07-15");
+    expect(wednesday?.menuItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "teishoku", name: "玉子の ビビンバ丼", priceYen: 350 })
+      ])
+    );
+    expect(wednesday?.menuItems.map((item) => item.name).join("\n")).not.toContain("温玉のせ");
+    expect(result.warnings).not.toContain("pdf_text_edge_affix_recovery_ambiguous");
+  });
+
   it("does not structure menuItems for non-ok location days", () => {
     const result = parseLocationPdf(
       fetchedPdf(),
