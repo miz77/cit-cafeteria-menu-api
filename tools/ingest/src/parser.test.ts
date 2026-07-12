@@ -292,6 +292,74 @@ describe("simple PDF parser", () => {
     expect(wednesday?.unassignedLines).not.toContain("¥350");
   });
 
+  it("keeps a day open when a footer says that a different service is closed", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      loadFixture("tsudanuma-20260713.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    const friday = result.menusByDate.get("2026-07-17");
+    expect(friday?.status).toBe("ok");
+    expect(friday?.menuText.rawText).toContain("夏季期間中 休業します");
+    expect(friday?.menuItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "四川風焼肉丼 水ギョーザ", priceYen: 400 }),
+        expect.objectContaining({ name: "唐揚 ピリ辛ソース", priceYen: 350 }),
+        expect.objectContaining({ name: "ビビンバ丼", category: "yu_teishoku", priceYen: 300 })
+      ])
+    );
+    expect(friday?.parser.warnings).not.toContain("closed_notice_conflicts_with_daily_menu");
+  });
+
+  it("prefers strong daily menu evidence over a conflicting in-table closed notice", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items: [
+          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
+          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
+          { text: "＜工大350＞", page: 1, x: 100, y: 650, width: 50, height: 10 },
+          { text: "唐揚", page: 1, x: 100, y: 630, width: 40, height: 10 },
+          { text: "臨時休業", page: 1, x: 100, y: 580, width: 50, height: 10 }
+        ]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    const monday = result.menusByDate.get("2026-07-06");
+    expect(monday?.status).toBe("ok");
+    expect(monday?.menuItems).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "唐揚", priceYen: 350 })])
+    );
+    expect(monday?.parser.warnings).toContain("closed_notice_conflicts_with_daily_menu");
+  });
+
+  it("marks an in-table closed notice without daily menu evidence as closed", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items: [
+          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
+          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
+          { text: "臨時休業", page: 1, x: 100, y: 580, width: 50, height: 10 }
+        ]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    const monday = result.menusByDate.get("2026-07-06");
+    expect(monday?.status).toBe("closed");
+    expect(monday?.menuItems).toEqual([]);
+  });
+
   it("structures current New Narashino fixtures without the known high-confidence false items", () => {
     const firstFloor = parseLocationPdf(
       fetchedPdf("shinnarashino-1f"),

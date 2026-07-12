@@ -197,30 +197,37 @@ export function parseLocationPdf(
       excludeYRanges: sharedRows.excludeYRanges
     });
     const labelRows = extractColumnRows(extraction.items, header, labelLeft, labelRight);
-    const dailyRows = collectDailyRows(rows, labelRows, profile);
+    const tableBottomY = inferMenuTableBottomY(labelRows, profile.structure);
+    const tableRows = tableBottomY === undefined ? rows : rows.filter((row) => row.y >= tableBottomY);
+    const belowTableRows = tableBottomY === undefined ? [] : rows.filter((row) => row.y < tableBottomY);
+    const dailyRows = collectDailyRows(tableRows, labelRows, profile);
     pushUniqueWarnings(profileWarnings, dailyRows.warnings);
-    const structureRows = rows.filter((row) => !isRowInYRanges(row, dailyRows.excludeYRanges));
+    const structureRows = tableRows.filter((row) => !isRowInYRanges(row, dailyRows.excludeYRanges));
     const rawLines = rows.map((row) => row.text);
     const {
       rawText,
       lines,
       warnings: lineWarnings
     } = normalizeLines(rawLines, limits.maxRawTextCharsPerLocationPerDate);
-    const status = statusForRawText(rawText, profile);
+    const structured = structureMenuRows(structureRows, labelRows, profile.structure);
+    const dailyMenuItems = [...structured.menuItems, ...dailyRows.menuItems];
+    const hasStrongDailyMenuEvidence = dailyMenuItems.some(isStrongDailyMenuEvidence);
+    const tableRawText = normalizeLines(
+      tableRows.map((row) => row.text),
+      limits.maxRawTextCharsPerLocationPerDate
+    ).rawText;
+    const hasClosedNotice = containsClosedNotice(tableRawText);
+    const status = statusForRawText(tableRawText, profile, hasStrongDailyMenuEvidence);
     const locationWarnings = uniqueWarnings([
       ...warnings,
       ...sharedRows.warnings,
       ...dailyRows.warnings,
-      ...lineWarnings
+      ...lineWarnings,
+      ...(hasStrongDailyMenuEvidence && hasClosedNotice ? ["closed_notice_conflicts_with_daily_menu"] : [])
     ]);
-    const structured =
-      status === "ok"
-        ? structureMenuRows(structureRows, labelRows, profile.structure)
-        : { menuItems: [], unassignedLines: lines };
-    const menuItems =
-      status === "ok"
-        ? [...structured.menuItems, ...dailyRows.menuItems, ...sharedRows.menuItems]
-        : structured.menuItems;
+    const menuItems = status === "ok" ? [...dailyMenuItems, ...sharedRows.menuItems] : [];
+    const unassignedLines =
+      status === "ok" ? [...structured.unassignedLines, ...belowTableRows.map((row) => row.text)] : lines;
 
     menusByDate.set(header.date, {
       ...locationBase(pdf.source.locationId),
@@ -232,7 +239,7 @@ export function parseLocationPdf(
         lines
       },
       menuItems,
-      unassignedLines: structured.unassignedLines,
+      unassignedLines,
       parser: {
         version: "simple-column-v2",
         confidence: confidenceFor(status, locationWarnings),
@@ -733,15 +740,36 @@ function normalizeText(text: string): string {
 
 function statusForRawText(
   rawText: string | null,
-  profile: LocationParserProfile = DEFAULT_LOCATION_PROFILE
+  profile: LocationParserProfile = DEFAULT_LOCATION_PROFILE,
+  hasStrongDailyMenuEvidence = false
 ): LocationStatus {
   if (!rawText) return "not_published";
   const statusLines = rawText.split("\n").filter((line) => !isWeekdayClosedNotice(line));
   const meaningfulLines = statusLines.filter((line) => !isMetaLineForStatus(line, profile.structure));
   if (meaningfulLines.length === 0 && profile.metaOnlyStatus) return profile.metaOnlyStatus;
-  const statusText = statusLines.join("\n");
-  if (/(休業|休み|閉店|定休日|closed)/i.test(statusText)) return "closed";
+  if (hasStrongDailyMenuEvidence) return "ok";
+  if (containsClosedNotice(statusLines.join("\n"))) return "closed";
   return "ok";
+}
+
+function containsClosedNotice(rawText: string | null): boolean {
+  return !!rawText && /(休業|休み|閉店|定休日|closed)/i.test(rawText);
+}
+
+function isStrongDailyMenuEvidence(item: MenuItem): boolean {
+  return item.category !== "unknown" && item.confidence === 0.9 && !containsClosedNotice(item.name);
+}
+
+function inferMenuTableBottomY(labelRows: readonly ColumnRow[], profile: StructureProfile): number | undefined {
+  const categoryLabels = labelRows.filter((row) => {
+    const label = normalizeText(row.text)
+      .replace(/(?:¥|\\)\s*\d{2,5}/g, "")
+      .replace(/^<(.+)>$/, "$1")
+      .trim();
+    return profile.categoryByLabel.some((rule) => rule.pattern.test(label));
+  });
+  if (categoryLabels.length === 0) return undefined;
+  return Math.min(...categoryLabels.map((row) => row.y)) - profile.labelMaxNameDepth;
 }
 
 function isMetaLineForStatus(text: string, profile: StructureProfile): boolean {
