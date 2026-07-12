@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { INGEST_USER_AGENT } from "./fetchDiagnostics";
-import { DEFAULT_PDF_LIMITS, fetchPdf, PdfFetchError } from "./pdf";
+import { __test__, DEFAULT_PDF_LIMITS, fetchPdf, PdfFetchError } from "./pdf";
 import type { IngestSource } from "./sources";
 
 const SOURCE: IngestSource = {
@@ -54,6 +54,31 @@ describe("PDF fetch", () => {
       status: "source_too_large",
       warnings: ["source_pdf_hard_size_limit_exceeded"]
     });
+  });
+});
+
+describe("PDF geometry extraction", () => {
+  it("keeps text extraction when optional operator loading fails", async () => {
+    const result = await __test__.extractWithDocumentProxy(
+      async () => ({
+        numPages: 1,
+        getPage: async () => ({
+          view: [0, 0, 100, 200],
+          getTextContent: async () => ({
+            items: [{ str: "menu", transform: [1, 0, 0, 1, 10, 100], width: 30, height: 10 }]
+          }),
+          getOperatorList: async () => {
+            throw new Error("unavailable");
+          }
+        })
+      }),
+      new Uint8Array([1]),
+      { value: { ops: { constructPath: 1 }, version: "test" }, warnings: [] }
+    );
+
+    expect(result.items).toEqual([{ text: "menu", page: 1, x: 10, y: 100, width: 30, height: 10 }]);
+    expect(result.pageGeometry).toEqual([]);
+    expect(result.warnings).toContain("pdf_operator_list_unavailable");
   });
 });
 

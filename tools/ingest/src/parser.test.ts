@@ -322,6 +322,93 @@ describe("simple PDF parser", () => {
     );
   });
 
+  it("expands merged menu cells from physical rulings without forward-filling text", () => {
+    const dates = ["13", "14", "15", "16", "17", "18"];
+    const items: PdfExtraction["items"] = [
+      ...dates.map((day, index) => ({
+        text: `${index === 0 ? "7月" : ""}${day}日（${"月火水木金土"[index]}）`,
+        page: 1,
+        x: 130 + index * 100,
+        y: 700,
+        width: 40,
+        height: 10
+      })),
+      { text: "今週のパスタ", page: 1, x: 20, y: 120, width: 70, height: 10 },
+      { text: "チキンクリーム", page: 1, x: 110, y: 110, width: 80, height: 20 },
+      { text: "チキントマトソース", page: 1, x: 330, y: 110, width: 140, height: 20 },
+      { text: "今日のパスタ", page: 1, x: 20, y: 80, width: 70, height: 10 },
+      ...dates.map((day, index) => ({
+        text: `日替り${day}`,
+        page: 1,
+        x: 120 + index * 100,
+        y: 70,
+        width: 60,
+        height: 20
+      }))
+    ];
+    const vertical = (position: number, start: number, end: number, source: "stroke" | "thin_fill") => ({
+      orientation: "vertical" as const,
+      position,
+      start,
+      end,
+      source
+    });
+    const horizontal = (position: number) => ({
+      orientation: "horizontal" as const,
+      position,
+      start: 0,
+      end: 700,
+      source: "stroke" as const
+    });
+    const rulings: NonNullable<PdfExtraction["pageGeometry"]>[number]["rulings"] = [
+      horizontal(60),
+      horizontal(100),
+      horizontal(140)
+    ];
+    for (const position of [100, 200, 600, 700]) rulings.push(vertical(position, 40, 160, "stroke"));
+    for (const position of [300, 400, 500]) {
+      rulings.push(vertical(position, 40, 100, "stroke"));
+      rulings.push(vertical(position + 0.4, 40, 99.8, "thin_fill"));
+      rulings.push(vertical(position, 140, 160, "stroke"));
+    }
+
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items,
+        pageGeometry: [{ page: 1, view: { left: 0, bottom: 0, right: 700, top: 800 }, rulings }]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    const weeklyNames = dates.map((day) =>
+      result.menusByDate
+        .get(`2026-07-${day}`)
+        ?.menuItems.filter((item) => item.categoryLabel === "今週のパスタ")
+        .map((item) => item.name)
+    );
+    expect(weeklyNames).toEqual([
+      ["チキンクリーム"],
+      ["チキントマトソース"],
+      ["チキントマトソース"],
+      ["チキントマトソース"],
+      ["チキントマトソース"],
+      []
+    ]);
+
+    for (const day of dates) {
+      expect(
+        result.menusByDate
+          .get(`2026-07-${day}`)
+          ?.menuItems.filter((item) => item.categoryLabel === "今日のパスタ")
+          .map((item) => item.name)
+      ).toEqual([`日替り${day}`]);
+    }
+  });
+
   it("keeps an explicit in-table cafeteria closure authoritative over printed menu rows", () => {
     const result = parseLocationPdf(
       fetchedPdf(),

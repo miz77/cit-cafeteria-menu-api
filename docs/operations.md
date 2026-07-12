@@ -150,3 +150,5 @@ pnpm --filter @cit-cafeteria/api-worker check:bundle
 3. GitHub Actions の run log または step summary にある食堂別 ingest summary を確認します。
 4. PDF が取得可能か、サイズ・ページ数上限内かを確認します。
 5. PDF の表レイアウトが変わっている場合は parser と fixtures を更新します。
+
+結合セルはPDFの縦横罫線から列範囲を復元します。内部境界が隣接行で確認できない、外周罫線が閉じない、同じrow band内の別列に競合テキストがある、など証拠が不足する場合は展開せず `ambiguous_column_span_not_expanded` を記録します。`pdf_operator_*` または `pdf_ruling_*` warningがある場合も基本テキスト抽出は継続されます。dependency更新時は、対応するPDF.js/unpdf versionのcharacterization testと手元PDFの罫線抽出を再確認してください。

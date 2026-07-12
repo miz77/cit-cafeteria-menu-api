@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { LocationStatus } from "@cit-cafeteria/schema";
 import { fetchFailureSlug, formatFetchErrorDetails, INGEST_USER_AGENT, logFetchFailure } from "./fetchDiagnostics";
+import { loadPdfOperatorPage, resolvePdfOperatorRuntime, type PdfOperatorPageProxy } from "./pdfOperatorSource";
+import { extractPdfRulings, type PdfPageGeometry } from "./pdfRulings";
 import type { IngestSource } from "./sources";
 
 export interface PdfLimits {
@@ -42,6 +44,11 @@ export interface PdfExtraction {
   pageCount: number;
   items: PdfTextItem[];
   warnings: string[];
+  pageGeometry?: PdfPageGeometry[];
+}
+
+interface PdfPageProxy extends PdfOperatorPageProxy {
+  getTextContent: () => Promise<{ items: Array<Record<string, unknown>> }>;
 }
 
 export class PdfFetchError extends Error {
@@ -117,9 +124,11 @@ function fetchNetworkError(url: string, stage: "request" | "body", error: unknow
 export async function extractTextItemsFromPdf(bytes: Uint8Array): Promise<PdfExtraction> {
   const unpdf = (await import("unpdf")) as Record<string, unknown>;
   const getDocumentProxy = unpdf.getDocumentProxy as undefined | ((source: unknown) => Promise<unknown>);
+  const getResolvedPDFJS = unpdf.getResolvedPDFJS as undefined | (() => Promise<unknown>);
 
   if (getDocumentProxy) {
-    return extractWithDocumentProxy(getDocumentProxy, bytes);
+    const operatorRuntime = await resolvePdfOperatorRuntime(getResolvedPDFJS);
+    return extractWithDocumentProxy(getDocumentProxy, bytes, operatorRuntime);
   }
 
   const extractText = unpdf.extractText as undefined | ((source: unknown, options?: unknown) => Promise<unknown>);
@@ -132,21 +141,24 @@ export async function extractTextItemsFromPdf(bytes: Uint8Array): Promise<PdfExt
 
 async function extractWithDocumentProxy(
   getDocumentProxy: (source: unknown) => Promise<unknown>,
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  operatorRuntime: Awaited<ReturnType<typeof resolvePdfOperatorRuntime>>
 ): Promise<PdfExtraction> {
   const pdf = (await getDocumentProxy(bytes)) as {
     numPages?: number;
-    getPage?: (pageNumber: number) => Promise<{
-      getTextContent: () => Promise<{ items: Array<Record<string, unknown>> }>;
-    }>;
+    getPage?: (pageNumber: number) => Promise<PdfPageProxy>;
   };
 
   const pageCount = Number(pdf.numPages ?? 0);
   if (!pageCount || !pdf.getPage) throw new Error("Could not read PDF page count");
 
   const items: PdfTextItem[] = [];
+  const warnings = [...operatorRuntime.warnings];
+  const pageGeometry: PdfPageGeometry[] = [];
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
+    // Keep text extraction first: PDF.js initializes shared font identifiers
+    // while producing text content.
     const textContent = await page.getTextContent();
     for (const rawItem of textContent.items) {
       const text = String(rawItem.str ?? "").trim();
@@ -162,9 +174,19 @@ async function extractWithDocumentProxy(
         height: Number(rawItem.height ?? 0)
       });
     }
+
+    if (operatorRuntime.value) {
+      const operatorPage = await loadPdfOperatorPage(page, pageNumber, operatorRuntime.value);
+      pushUnique(warnings, operatorPage.warnings);
+      if (operatorPage.value) {
+        const rulingResult = extractPdfRulings(operatorPage.value);
+        pageGeometry.push(rulingResult.geometry);
+        pushUnique(warnings, rulingResult.warnings);
+      }
+    }
   }
 
-  return { pageCount, items, warnings: [] };
+  return { pageCount, items, warnings, pageGeometry };
 }
 
 async function extractWithPlainText(
@@ -220,3 +242,11 @@ function resultToPageCount(result: unknown): number | null {
   if (Array.isArray(record.pages)) return record.pages.length;
   return null;
 }
+
+function pushUnique(target: string[], additions: readonly string[]): void {
+  for (const addition of additions) {
+    if (!target.includes(addition)) target.push(addition);
+  }
+}
+
+export const __test__ = { extractWithDocumentProxy };

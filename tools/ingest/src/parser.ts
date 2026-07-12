@@ -12,6 +12,7 @@ import { appliesToDate, type ClosureNotice, findClosureNotices, type NoticeRow }
 import type { FetchedPdf, PdfExtraction, PdfLimits, PdfTextItem } from "./pdf";
 import type { IngestSource } from "./sources";
 import { type ColumnRow, DEFAULT_STRUCTURE_PROFILE, type StructureProfile, structureMenuRows } from "./structure";
+import { inferMergedColumnSpans } from "./tableGeometry";
 
 export interface LocationParseResult {
   locationId: LocationId;
@@ -43,6 +44,7 @@ interface LocationParserProfile {
 interface ExtractColumnRowsOptions {
   bottomY?: number;
   excludeYRanges?: readonly YRange[];
+  additionalItemIndexes?: ReadonlySet<number>;
 }
 
 interface YRange {
@@ -194,21 +196,43 @@ export function parseLocationPdf(
 
   const menusByDate = new Map<string, LocationMenu>();
   const { columns, blockCount } = computeHeaderColumns(headers);
+  const columnSpans = inferMergedColumnSpans(
+    extraction.items,
+    columns.map((column) => ({ page: column.header.page, left: column.left, right: column.right })),
+    extraction.pageGeometry ?? [],
+    {
+      excludedItemIndexes: new Set(headers.map((header) => extraction.items.indexOf(header.item)))
+    }
+  );
+  const geometryWarnings = columnSpans.warnings;
   const sharedRows = collectSharedRows(extraction.items, profile);
   const profileWarnings = [...sharedRows.warnings];
   if (blockCount > 1) {
     warnings.push("multi_block_layout_detected");
   }
 
-  const columnContexts = columns.map(({ header, left, right, labelLeft, labelRight }) => {
-    const noticeRows = extractColumnRows(extraction.items, header, left, right);
+  const columnContexts = columns.map(({ header, left, right, labelLeft, labelRight }, columnIndex) => {
+    const additionalItemIndexes = new Set(
+      Array.from(columnSpans.spansByItemIndex)
+        .filter(([, span]) => columnIndex >= span.firstColumn && columnIndex < span.lastColumnExclusive)
+        .map(([itemIndex]) => itemIndex)
+    );
+    const noticeRows = extractColumnRows(extraction.items, header, left, right, { additionalItemIndexes });
     const rows = extractColumnRows(extraction.items, header, left, right, {
       bottomY: sharedRows.columnBottomY,
-      excludeYRanges: sharedRows.excludeYRanges
+      excludeYRanges: sharedRows.excludeYRanges,
+      additionalItemIndexes
     });
     const labelRows = extractColumnRows(extraction.items, header, labelLeft, labelRight);
     const tableBottomY = inferMenuTableBottomY(labelRows, profile.structure);
-    return { header, rows, noticeRows, labelRows, tableBottomY };
+    const spanWarnings = columnSpans.ambiguousItemIndexes.some((itemIndex) => {
+      const item = extraction.items[itemIndex];
+      const center = item.x + item.width / 2;
+      return item.page === header.page && center >= left && center < right;
+    })
+      ? ["ambiguous_column_span_not_expanded"]
+      : [];
+    return { header, rows, noticeRows, labelRows, tableBottomY, spanWarnings };
   });
   const notices = uniqueClosureNotices([
     ...columnContexts.flatMap(({ header, noticeRows, tableBottomY }) =>
@@ -222,7 +246,7 @@ export function parseLocationPdf(
   ]);
   const fallbackStatuses = fallbackStatusesFromNotices(notices, headers);
 
-  for (const { header, rows, labelRows } of columnContexts) {
+  for (const { header, rows, labelRows, spanWarnings } of columnContexts) {
     const applicableNotices = notices.filter((notice) => appliesToDate(notice, header.date));
     const noticeItemIndexes = new Set(applicableNotices.flatMap((notice) => notice.sourceItemIndexes));
     const menuRows = rows.filter((row) => !row.sourceItemIndexes.some((index) => noticeItemIndexes.has(index)));
@@ -244,6 +268,7 @@ export function parseLocationPdf(
       ...warnings,
       ...sharedRows.warnings,
       ...dailyRows.warnings,
+      ...spanWarnings,
       ...lineWarnings,
       ...(status === "unknown" ? ["closure_notice_subject_unknown"] : [])
     ]);
@@ -283,7 +308,7 @@ export function parseLocationPdf(
     sourceInfo,
     status: "ok",
     statusMessage: "Parsed PDF date columns.",
-    warnings: uniqueWarnings([...warnings, ...profileWarnings]),
+    warnings: uniqueWarnings([...warnings, ...profileWarnings, ...geometryWarnings]),
     menusByDate,
     fallbackStatuses,
     notices
@@ -516,7 +541,11 @@ function extractColumnRows(
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => item.page === header.page)
     .filter(({ item }) => item !== header.item)
-    .filter(({ item }) => item.x + item.width / 2 >= left && item.x + item.width / 2 < right)
+    .filter(
+      ({ item, index }) =>
+        (item.x + item.width / 2 >= left && item.x + item.width / 2 < right) ||
+        options.additionalItemIndexes?.has(index)
+    )
     .filter(({ item }) => item.y < header.y - 2)
     .filter(({ item }) => options.bottomY === undefined || item.y >= options.bottomY)
     .filter(({ item }) => !options.excludeYRanges?.some((range) => item.y >= range.min && item.y <= range.max))
