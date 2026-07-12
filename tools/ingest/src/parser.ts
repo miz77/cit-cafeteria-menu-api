@@ -200,9 +200,11 @@ export function parseLocationPdf(
     const tableBottomY = inferMenuTableBottomY(labelRows, profile.structure);
     const tableRows = tableBottomY === undefined ? rows : rows.filter((row) => row.y >= tableBottomY);
     const belowTableRows = tableBottomY === undefined ? [] : rows.filter((row) => row.y < tableBottomY);
-    const dailyRows = collectDailyRows(tableRows, labelRows, profile);
+    const closedNoticeRows = tableRows.filter((row) => containsClosedNotice(row.text));
+    const menuTableRows = tableRows.filter((row) => !containsClosedNotice(row.text));
+    const dailyRows = collectDailyRows(menuTableRows, labelRows, profile);
     pushUniqueWarnings(profileWarnings, dailyRows.warnings);
-    const structureRows = tableRows.filter((row) => !isRowInYRanges(row, dailyRows.excludeYRanges));
+    const structureRows = menuTableRows.filter((row) => !isRowInYRanges(row, dailyRows.excludeYRanges));
     const rawLines = rows.map((row) => row.text);
     const {
       rawText,
@@ -227,7 +229,13 @@ export function parseLocationPdf(
     ]);
     const menuItems = status === "ok" ? [...dailyMenuItems, ...sharedRows.menuItems] : [];
     const unassignedLines =
-      status === "ok" ? [...structured.unassignedLines, ...belowTableRows.map((row) => row.text)] : lines;
+      status === "ok"
+        ? [
+            ...structured.unassignedLines,
+            ...closedNoticeRows.map((row) => row.text),
+            ...belowTableRows.map((row) => row.text)
+          ]
+        : lines;
 
     menusByDate.set(header.date, {
       ...locationBase(pdf.source.locationId),

@@ -336,6 +336,8 @@ describe("simple PDF parser", () => {
     expect(monday?.menuItems).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: "唐揚", priceYen: 350 })])
     );
+    expect(monday?.menuItems.map((item) => item.name)).not.toContain("臨時休業");
+    expect(monday?.unassignedLines).toContain("臨時休業");
     expect(monday?.parser.warnings).toContain("closed_notice_conflicts_with_daily_menu");
   });
 
