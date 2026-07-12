@@ -126,7 +126,8 @@ describe("ingest runner", () => {
       fetchImpl: async () => {
         throw new Error("CIT fetch must not be called");
       },
-      readKvValue: async (_config, key) => currentWeekKvValue(key)
+      readKvValue: async (_config, key) => currentWeekKvValue(key),
+      now: new Date("2026-07-06T00:00:00.000Z")
     });
 
     expect(result).toMatchObject({ dates: [], writes: [], skipped: "already_generated" });
