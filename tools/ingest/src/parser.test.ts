@@ -311,9 +311,18 @@ describe("simple PDF parser", () => {
       ])
     );
     expect(friday?.parser.warnings).not.toContain("closed_notice_conflicts_with_daily_menu");
+    expect(result.notices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subject: "separate_service",
+          matchedRule: "closure.separate_service.bento_sales",
+          sourceItemIndexes: expect.any(Array)
+        })
+      ])
+    );
   });
 
-  it("prefers strong daily menu evidence over a conflicting in-table closed notice", () => {
+  it("keeps an explicit in-table cafeteria closure authoritative over printed menu rows", () => {
     const result = parseLocationPdf(
       fetchedPdf(),
       {
@@ -332,13 +341,10 @@ describe("simple PDF parser", () => {
     );
 
     const monday = result.menusByDate.get("2026-07-06");
-    expect(monday?.status).toBe("ok");
-    expect(monday?.menuItems).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "唐揚", priceYen: 350 })])
-    );
-    expect(monday?.menuItems.map((item) => item.name)).not.toContain("臨時休業");
+    expect(monday?.status).toBe("closed");
+    expect(monday?.menuItems).toEqual([]);
     expect(monday?.unassignedLines).toContain("臨時休業");
-    expect(monday?.parser.warnings).toContain("closed_notice_conflicts_with_daily_menu");
+    expect(monday?.parser.warnings).not.toContain("closure_notice_subject_unknown");
   });
 
   it("marks an in-table closed notice without daily menu evidence as closed", () => {
@@ -360,6 +366,84 @@ describe("simple PDF parser", () => {
     const monday = result.menusByDate.get("2026-07-06");
     expect(monday?.status).toBe("closed");
     expect(monday?.menuItems).toEqual([]);
+  });
+
+  it("applies an explicit cafeteria footer closure to the document", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items: [
+          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
+          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
+          { text: "＜工大350＞", page: 1, x: 100, y: 650, width: 50, height: 10 },
+          { text: "唐揚", page: 1, x: 100, y: 630, width: 40, height: 10 },
+          { text: "津田沼食堂は臨時休業します", page: 1, x: 80, y: 200, width: 160, height: 10 }
+        ]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    const monday = result.menusByDate.get("2026-07-06");
+    expect(monday?.status).toBe("closed");
+    expect(monday?.menuItems).toEqual([]);
+    expect(result.notices[0]).toMatchObject({
+      subject: "cafeteria",
+      appliesTo: { kind: "document" },
+      matchedRule: "closure.cafeteria.explicit_subject"
+    });
+  });
+
+  it("preserves an unknown-subject closure for diagnostics without publishing menu items", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items: [
+          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
+          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
+          { text: "＜工大350＞", page: 1, x: 100, y: 650, width: 50, height: 10 },
+          { text: "唐揚", page: 1, x: 100, y: 630, width: 40, height: 10 },
+          { text: "施設都合により休業します", page: 1, x: 80, y: 200, width: 150, height: 10 }
+        ]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    const monday = result.menusByDate.get("2026-07-06");
+    expect(monday?.status).toBe("unknown");
+    expect(monday?.menuItems).toEqual([]);
+    expect(monday?.menuText.rawText).toContain("施設都合により休業します");
+    expect(monday?.unassignedLines).toContain("施設都合により休業します");
+    expect(monday?.parser.warnings).toContain("closure_notice_subject_unknown");
+  });
+
+  it("does not remove a legitimate menu name containing 休み", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items: [
+          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
+          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
+          { text: "＜工大350＞", page: 1, x: 100, y: 650, width: 50, height: 10 },
+          { text: "箸休み小鉢", page: 1, x: 100, y: 630, width: 60, height: 10 }
+        ]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    const monday = result.menusByDate.get("2026-07-06");
+    expect(monday?.status).toBe("ok");
+    expect(monday?.menuItems).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "箸休み小鉢", priceYen: 350 })])
+    );
   });
 
   it("structures current New Narashino fixtures without the known high-confidence false items", () => {

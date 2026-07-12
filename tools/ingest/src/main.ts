@@ -14,6 +14,7 @@ import { CloudflareKvReadError, getKvValue, type CloudflareKvConfig, uploadKvWri
 import { isPausedOn, loadPausePeriods } from "./pauses";
 import { failedLocationResult, type LocationParseResult, parseLocationPdf } from "./parser";
 import { DEFAULT_PDF_LIMITS, extractTextItemsFromPdf, fetchPdf, PdfFetchError, type PdfLimits } from "./pdf";
+import { aggregateGeneratedRun } from "./runOutcome";
 import { discoverSourcesFromHtml, fallbackSources, type IngestSource } from "./sources";
 
 export interface IngestEnv {
@@ -119,13 +120,13 @@ export async function runIngest(options: RunIngestOptions = {}): Promise<RunInge
   }
 
   const generated = generateMenuDocuments(results, generatedAt);
+  const generatedOutcome = generated.dates.length > 0 ? aggregateGeneratedRun(generated.days) : null;
   const health: HealthResponse = {
-    status:
-      generated.dates.length === 0 ? "failed" : results.some((result) => result.status !== "ok") ? "degraded" : "ok",
+    status: generatedOutcome?.healthStatus ?? "failed",
     checkedAt: generatedAt,
     generatedAt,
     weekStartDate,
-    lastError: generated.dates.length === 0 ? "No menu documents were generated." : null
+    lastError: generatedOutcome ? generatedOutcome.lastError : "No menu documents were generated."
   };
 
   await reportIngestSummary({
@@ -167,6 +168,10 @@ export async function runIngest(options: RunIngestOptions = {}): Promise<RunInge
 
   if (generated.dates.length === 0) {
     throw classifyEmptyRun(results, discovery.warnings);
+  }
+
+  if (generatedOutcome?.rejectAfterUpload) {
+    throw new IngestRunError(generatedOutcome.lastError ?? "All generated location days were untrusted.", false);
   }
 
   return { writes, dates: generated.dates };

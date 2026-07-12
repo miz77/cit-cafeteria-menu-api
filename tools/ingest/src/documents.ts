@@ -31,6 +31,7 @@ export interface KvWrite {
 
 export interface GeneratedDocuments {
   dates: string[];
+  days: MenuWeekDay[];
   writes: KvWrite[];
 }
 
@@ -98,7 +99,7 @@ export function generateMenuDocuments(
 
   writes.push(...generateWeekMenuWrites(generatedDays, generatedAt));
 
-  return { dates, writes };
+  return { dates, days: generatedDays, writes };
 }
 
 export function generateStaticWrites(): KvWrite[] {
