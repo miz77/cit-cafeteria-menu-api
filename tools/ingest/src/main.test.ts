@@ -14,6 +14,7 @@ const ENV: IngestEnv = {
   CLOUDFLARE_KV_NAMESPACE_ID: "namespace"
 };
 const TEST_PAUSE_DATE = "2026-08-01";
+const CURRENT_WEEK_FIXTURE_NOW = new Date("2026-07-06T00:00:00.000Z");
 
 type ReadKvValue = (config: CloudflareKvConfig, key: string) => Promise<string | null>;
 
@@ -127,7 +128,7 @@ describe("ingest runner", () => {
         throw new Error("CIT fetch must not be called");
       },
       readKvValue: async (_config, key) => currentWeekKvValue(key),
-      now: new Date("2026-07-06T00:00:00.000Z")
+      now: CURRENT_WEEK_FIXTURE_NOW
     });
 
     expect(result).toMatchObject({ dates: [], writes: [], skipped: "already_generated" });
