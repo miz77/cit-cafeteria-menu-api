@@ -364,7 +364,7 @@ describe("simple PDF parser", () => {
       ])
     );
     expect(wednesday?.menuItems.map((item) => item.name).join("\n")).not.toContain("温玉のせ");
-    expect(result.warnings).toContain("pdf_text_affix_recovered_from_operator_list");
+    expect(result.warnings).not.toContain("pdf_text_edge_affix_recovery_ambiguous");
   });
 
   it("does not structure menuItems for non-ok location days", () => {

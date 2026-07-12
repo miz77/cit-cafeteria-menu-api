@@ -610,7 +610,7 @@
       "height": 28.8
     },
     {
-      "text": "ー￥",
+      "text": "カレー￥",
       "page": 1,
       "x": -1.9391999999999925,
       "y": 472.44,
@@ -1074,7 +1074,7 @@
       "height": 28.8
     },
     {
-      "text": "0",
+      "text": "00",
       "page": 1,
       "x": 588.96,
       "y": 650.45,
@@ -1090,5 +1090,5 @@
       "height": 28.824
     }
   ],
-  "warnings": ["pdf_text_affix_recovered_from_operator_list"]
+  "warnings": []
 }

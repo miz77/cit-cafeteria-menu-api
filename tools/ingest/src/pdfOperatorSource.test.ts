@@ -19,7 +19,10 @@ describe("PDF operator source", () => {
   });
 
   it("resolves PDF.js OPS without depending on unrelated runtime fields", async () => {
-    const result = await resolvePdfOperatorRuntime(async () => ({ OPS: { save: 10, restore: 11 }, version: "5.6.205" }));
+    const result = await resolvePdfOperatorRuntime(async () => ({
+      OPS: { save: 10, restore: 11 },
+      version: "5.6.205"
+    }));
 
     expect(result).toEqual({
       value: { ops: { save: 10, restore: 11 }, version: "5.6.205" },
