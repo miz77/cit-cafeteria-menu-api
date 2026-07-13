@@ -8,7 +8,7 @@ import {
   type MenuItem
 } from "@cit-cafeteria/schema";
 import { inferDateFromMonthDay, mondayWeekStart, parseDateOnly } from "./dates";
-import { appliesToDate, type ClosureNotice, findClosureNotices, type NoticeRow } from "./notices";
+import { appliesToDate, type ClosureNotice, findClosureNotices, mergeClosureNotices, type NoticeRow } from "./notices";
 import type { FetchedPdf, PdfExtraction, PdfLimits, PdfTextItem } from "./pdf";
 import type { IngestSource } from "./sources";
 import { type ColumnRow, DEFAULT_STRUCTURE_PROFILE, type StructureProfile, structureMenuRows } from "./structure";
@@ -234,7 +234,7 @@ export function parseLocationPdf(
       : [];
     return { header, rows, noticeRows, labelRows, tableBottomY, spanWarnings };
   });
-  const notices = uniqueClosureNotices([
+  const noticeResolution = mergeClosureNotices([
     ...columnContexts.flatMap(({ header, noticeRows, tableBottomY }) =>
       findClosureNotices(noticeRows, {
         date: header.date,
@@ -244,6 +244,8 @@ export function parseLocationPdf(
     ),
     ...standaloneWeekdayNotices(extraction.items, headers)
   ]);
+  const notices = noticeResolution.notices;
+  pushUniqueWarnings(profileWarnings, noticeResolution.warnings);
   const fallbackStatuses = fallbackStatusesFromNotices(notices, headers);
 
   for (const { header, rows, labelRows, spanWarnings } of columnContexts) {
@@ -269,6 +271,7 @@ export function parseLocationPdf(
       ...sharedRows.warnings,
       ...dailyRows.warnings,
       ...spanWarnings,
+      ...noticeResolution.warnings,
       ...lineWarnings,
       ...(status === "unknown" ? ["closure_notice_subject_unknown"] : [])
     ]);
@@ -846,16 +849,6 @@ function isNoticeBarrier(text: string, profile: StructureProfile): boolean {
     .replace(/^<(.+)>$/, "$1")
     .trim();
   return profile.categoryByLabel.some((rule) => rule.pattern.test(label));
-}
-
-function uniqueClosureNotices(notices: readonly ClosureNotice[]): ClosureNotice[] {
-  const seen = new Set<string>();
-  return notices.filter((notice) => {
-    const key = notice.sourceItemIndexes.join(",");
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function fallbackStatusesFromNotices(

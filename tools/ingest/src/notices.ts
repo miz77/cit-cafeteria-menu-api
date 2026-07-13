@@ -30,6 +30,11 @@ export interface ClosureNotice {
   sourceItemIndexes: number[];
 }
 
+export interface ClosureNoticeMergeResult {
+  notices: ClosureNotice[];
+  warnings: string[];
+}
+
 export interface NoticeContext {
   date: string;
   insideTable: (row: NoticeRow) => boolean;
@@ -80,6 +85,34 @@ export function appliesToDate(notice: ClosureNotice, date: string): boolean {
 
 export function isClosurePredicate(text: string): boolean {
   return closurePredicate(text);
+}
+
+export function mergeClosureNotices(notices: readonly ClosureNotice[]): ClosureNoticeMergeResult {
+  const merged = new Map<string, ClosureNotice>();
+  const warnings: string[] = [];
+
+  for (const notice of notices) {
+    const key = notice.sourceItemIndexes.join(",");
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, cloneNotice(notice));
+      continue;
+    }
+
+    if (!sameNoticeEvidence(existing, notice)) {
+      pushUnique(warnings, "closure_notice_evidence_conflict");
+      continue;
+    }
+
+    const appliesTo = mergeApplicability(existing.appliesTo, notice.appliesTo);
+    if (!appliesTo) {
+      pushUnique(warnings, "closure_notice_applicability_conflict");
+      continue;
+    }
+    existing.appliesTo = appliesTo;
+  }
+
+  return { notices: Array.from(merged.values()), warnings };
 }
 
 function classifyClosureNotice(
@@ -184,6 +217,46 @@ function uniqueNotices(notices: readonly ClosureNotice[]): ClosureNotice[] {
     seen.add(key);
     return true;
   });
+}
+
+function cloneNotice(notice: ClosureNotice): ClosureNotice {
+  return {
+    ...notice,
+    appliesTo:
+      notice.appliesTo.kind === "document"
+        ? { kind: "document" }
+        : notice.appliesTo.kind === "dates"
+          ? { kind: "dates", dates: [...notice.appliesTo.dates] }
+          : { kind: "weekdays", weekdays: [...notice.appliesTo.weekdays] },
+    lines: [...notice.lines],
+    bounds: { ...notice.bounds },
+    sourceItemIndexes: [...notice.sourceItemIndexes]
+  };
+}
+
+function sameNoticeEvidence(left: ClosureNotice, right: ClosureNotice): boolean {
+  return (
+    left.page === right.page &&
+    left.subject === right.subject &&
+    left.matchedRule === right.matchedRule &&
+    left.lines.join("\n") === right.lines.join("\n")
+  );
+}
+
+function mergeApplicability(left: NoticeApplicability, right: NoticeApplicability): NoticeApplicability | null {
+  if (left.kind !== right.kind) return null;
+  if (left.kind === "document" && right.kind === "document") return { kind: "document" };
+  if (left.kind === "dates" && right.kind === "dates") {
+    return { kind: "dates", dates: Array.from(new Set([...left.dates, ...right.dates])).sort() };
+  }
+  if (left.kind === "weekdays" && right.kind === "weekdays") {
+    return { kind: "weekdays", weekdays: Array.from(new Set([...left.weekdays, ...right.weekdays])).sort() };
+  }
+  return null;
+}
+
+function pushUnique(target: string[], value: string): void {
+  if (!target.includes(value)) target.push(value);
 }
 
 function normalizeText(text: string): string {

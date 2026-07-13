@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appliesToDate, findClosureNotices, isClosurePredicate, type NoticeRow } from "./notices";
+import { appliesToDate, findClosureNotices, isClosurePredicate, mergeClosureNotices, type NoticeRow } from "./notices";
 
 const context = {
   date: "2026-07-17",
@@ -67,6 +67,22 @@ describe("closure notices", () => {
       date: "2027-01-04"
     })[0];
     expect(december.appliesTo).toEqual({ kind: "dates", dates: ["2026-12-28"] });
+  });
+
+  it("merges dates inferred from the same physical notice evidence", () => {
+    const tuesday = findClosureNotices([row("臨時休業", 500, 100, 180, 6)], {
+      ...context,
+      date: "2026-07-14"
+    })[0];
+    const friday = findClosureNotices([row("臨時休業", 500, 100, 180, 6)], {
+      ...context,
+      date: "2026-07-17"
+    })[0];
+
+    expect(mergeClosureNotices([tuesday, friday])).toEqual({
+      notices: [expect.objectContaining({ appliesTo: { kind: "dates", dates: ["2026-07-14", "2026-07-17"] } })],
+      warnings: []
+    });
   });
 });
 
