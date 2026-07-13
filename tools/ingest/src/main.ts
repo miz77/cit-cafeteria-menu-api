@@ -48,6 +48,12 @@ export interface RunIngestOptions {
   fetchImpl?: typeof fetch;
   upload?: (config: CloudflareKvConfig, writes: readonly KvWrite[]) => Promise<void>;
   readKvValue?: (config: CloudflareKvConfig, key: string) => Promise<string | null>;
+  ingestLocation?: (
+    source: IngestSource,
+    limits: PdfLimits,
+    targetDate: string,
+    fetchImpl: typeof fetch
+  ) => Promise<LocationParseResult>;
   pauseConfigPath?: string;
   now?: Date;
 }
@@ -114,9 +120,10 @@ export async function runIngest(options: RunIngestOptions = {}): Promise<RunInge
 
   const discovery = await discoverSources(fetchImpl);
   const results: LocationParseResult[] = [];
+  const ingest = options.ingestLocation ?? ingestLocation;
 
   for (const source of discovery.sources) {
-    results.push(await ingestLocation(source, limits, targetDate, fetchImpl));
+    results.push(await ingest(source, limits, targetDate, fetchImpl));
   }
 
   const generated = generateMenuDocuments(results, generatedAt);

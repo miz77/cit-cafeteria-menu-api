@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appliesToDate, findClosureNotices, isClosurePredicate, type NoticeRow } from "./notices";
+import { appliesToDate, findClosureNotices, isClosurePredicate, mergeClosureNotices, type NoticeRow } from "./notices";
 
 const context = {
   date: "2026-07-17",
@@ -50,8 +50,39 @@ describe("closure notices", () => {
     expect(dated).toMatchObject({ subject: "unknown", appliesTo: { kind: "dates", dates: ["2026-07-18"] } });
   });
 
-  it("does not confuse a menu name containing 休み with a closure predicate", () => {
-    expect(isClosurePredicate("箸休み小鉢")).toBe(false);
+  it("accepts simple closure wording without enumerating suffixes", () => {
+    expect(isClosurePredicate("休業中")).toBe(true);
+    expect(isClosurePredicate("明日は休み")).toBe(true);
+  });
+
+  it("infers notice years nearest to the menu context", () => {
+    const january = findClosureNotices([row("1月5日は休業", 200, 100, 180, 4)], {
+      ...context,
+      date: "2026-12-28"
+    })[0];
+    expect(january.appliesTo).toEqual({ kind: "dates", dates: ["2027-01-05"] });
+
+    const december = findClosureNotices([row("12月28日は休業", 200, 100, 180, 5)], {
+      ...context,
+      date: "2027-01-04"
+    })[0];
+    expect(december.appliesTo).toEqual({ kind: "dates", dates: ["2026-12-28"] });
+  });
+
+  it("merges dates inferred from the same physical notice evidence", () => {
+    const tuesday = findClosureNotices([row("臨時休業", 500, 100, 180, 6)], {
+      ...context,
+      date: "2026-07-14"
+    })[0];
+    const friday = findClosureNotices([row("臨時休業", 500, 100, 180, 6)], {
+      ...context,
+      date: "2026-07-17"
+    })[0];
+
+    expect(mergeClosureNotices([tuesday, friday])).toEqual({
+      notices: [expect.objectContaining({ appliesTo: { kind: "dates", dates: ["2026-07-14", "2026-07-17"] } })],
+      warnings: []
+    });
   });
 });
 

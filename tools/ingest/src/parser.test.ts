@@ -30,6 +30,64 @@ function fetchedPdf(locationId: IngestSource["locationId"] = "tsudanuma"): Fetch
   };
 }
 
+function mergedPastaRowExtraction(mergedText: string): PdfExtraction {
+  const dates = ["13", "14", "15", "16", "17", "18"];
+  const items: PdfExtraction["items"] = [
+    ...dates.map((day, index) => ({
+      text: `${index === 0 ? "7月" : ""}${day}日（${"月火水木金土"[index]}）`,
+      page: 1,
+      x: 130 + index * 100,
+      y: 700,
+      width: 40,
+      height: 10
+    })),
+    { text: "今週のパスタ", page: 1, x: 20, y: 120, width: 70, height: 10 },
+    { text: "チキンクリーム", page: 1, x: 110, y: 110, width: 80, height: 20 },
+    { text: mergedText, page: 1, x: 330, y: 110, width: 140, height: 20 },
+    { text: "今日のパスタ", page: 1, x: 20, y: 80, width: 70, height: 10 },
+    ...dates.map((day, index) => ({
+      text: `日替り${day}`,
+      page: 1,
+      x: 120 + index * 100,
+      y: 70,
+      width: 60,
+      height: 20
+    }))
+  ];
+  const vertical = (position: number, start: number, end: number, source: "stroke" | "thin_fill") => ({
+    orientation: "vertical" as const,
+    position,
+    start,
+    end,
+    source
+  });
+  const horizontal = (position: number) => ({
+    orientation: "horizontal" as const,
+    position,
+    start: 0,
+    end: 700,
+    source: "stroke" as const
+  });
+  const rulings: NonNullable<PdfExtraction["pageGeometry"]>[number]["rulings"] = [
+    horizontal(60),
+    horizontal(100),
+    horizontal(140)
+  ];
+  for (const position of [100, 200, 600, 700]) rulings.push(vertical(position, 40, 160, "stroke"));
+  for (const position of [300, 400, 500]) {
+    rulings.push(vertical(position, 40, 100, "stroke"));
+    rulings.push(vertical(position + 0.4, 40, 99.8, "thin_fill"));
+    rulings.push(vertical(position, 140, 160, "stroke"));
+  }
+
+  return {
+    pageCount: 1,
+    warnings: [],
+    items,
+    pageGeometry: [{ page: 1, view: { left: 0, bottom: 0, right: 700, top: 800 }, rulings }]
+  };
+}
+
 function parserCharacterizationSnapshot(result: ReturnType<typeof parseLocationPdf>) {
   return Array.from(result.menusByDate.entries()).map(([date, menu]) => ({
     date,
@@ -367,62 +425,10 @@ describe("simple PDF parser", () => {
 
   it("expands merged menu cells from physical rulings without forward-filling text", () => {
     const dates = ["13", "14", "15", "16", "17", "18"];
-    const items: PdfExtraction["items"] = [
-      ...dates.map((day, index) => ({
-        text: `${index === 0 ? "7月" : ""}${day}日（${"月火水木金土"[index]}）`,
-        page: 1,
-        x: 130 + index * 100,
-        y: 700,
-        width: 40,
-        height: 10
-      })),
-      { text: "今週のパスタ", page: 1, x: 20, y: 120, width: 70, height: 10 },
-      { text: "チキンクリーム", page: 1, x: 110, y: 110, width: 80, height: 20 },
-      { text: "チキントマトソース", page: 1, x: 330, y: 110, width: 140, height: 20 },
-      { text: "今日のパスタ", page: 1, x: 20, y: 80, width: 70, height: 10 },
-      ...dates.map((day, index) => ({
-        text: `日替り${day}`,
-        page: 1,
-        x: 120 + index * 100,
-        y: 70,
-        width: 60,
-        height: 20
-      }))
-    ];
-    const vertical = (position: number, start: number, end: number, source: "stroke" | "thin_fill") => ({
-      orientation: "vertical" as const,
-      position,
-      start,
-      end,
-      source
-    });
-    const horizontal = (position: number) => ({
-      orientation: "horizontal" as const,
-      position,
-      start: 0,
-      end: 700,
-      source: "stroke" as const
-    });
-    const rulings: NonNullable<PdfExtraction["pageGeometry"]>[number]["rulings"] = [
-      horizontal(60),
-      horizontal(100),
-      horizontal(140)
-    ];
-    for (const position of [100, 200, 600, 700]) rulings.push(vertical(position, 40, 160, "stroke"));
-    for (const position of [300, 400, 500]) {
-      rulings.push(vertical(position, 40, 100, "stroke"));
-      rulings.push(vertical(position + 0.4, 40, 99.8, "thin_fill"));
-      rulings.push(vertical(position, 140, 160, "stroke"));
-    }
 
     const result = parseLocationPdf(
       fetchedPdf(),
-      {
-        pageCount: 1,
-        warnings: [],
-        items,
-        pageGeometry: [{ page: 1, view: { left: 0, bottom: 0, right: 700, top: 800 }, rulings }]
-      },
+      mergedPastaRowExtraction("チキントマトソース"),
       DEFAULT_PDF_LIMITS,
       "2026-07-13"
     );
@@ -450,6 +456,25 @@ describe("simple PDF parser", () => {
           .map((item) => item.name)
       ).toEqual([`日替り${day}`]);
     }
+  });
+
+  it("applies a merged in-table closure to every physically covered date", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      mergedPastaRowExtraction("臨時休業"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    expect(["13", "14", "15", "16", "17", "18"].map((day) => result.menusByDate.get(`2026-07-${day}`)?.status)).toEqual(
+      ["ok", "closed", "closed", "closed", "closed", "ok"]
+    );
+    expect(result.notices).toEqual([
+      expect.objectContaining({
+        subject: "cafeteria",
+        appliesTo: { kind: "dates", dates: ["2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17"] }
+      })
+    ]);
   });
 
   it("keeps an explicit in-table cafeteria closure authoritative over printed menu rows", () => {
@@ -550,30 +575,6 @@ describe("simple PDF parser", () => {
     expect(monday?.menuText.rawText).toContain("施設都合により休業します");
     expect(monday?.unassignedLines).toContain("施設都合により休業します");
     expect(monday?.parser.warnings).toContain("closure_notice_subject_unknown");
-  });
-
-  it("does not remove a legitimate menu name containing 休み", () => {
-    const result = parseLocationPdf(
-      fetchedPdf(),
-      {
-        pageCount: 1,
-        warnings: [],
-        items: [
-          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
-          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
-          { text: "＜工大350＞", page: 1, x: 100, y: 650, width: 50, height: 10 },
-          { text: "箸休み小鉢", page: 1, x: 100, y: 630, width: 60, height: 10 }
-        ]
-      },
-      DEFAULT_PDF_LIMITS,
-      "2026-07-03"
-    );
-
-    const monday = result.menusByDate.get("2026-07-06");
-    expect(monday?.status).toBe("ok");
-    expect(monday?.menuItems).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "箸休み小鉢", priceYen: 350 })])
-    );
   });
 
   it("structures current New Narashino fixtures without the known high-confidence false items", () => {

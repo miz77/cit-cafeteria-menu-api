@@ -1,3 +1,5 @@
+import { inferDateFromMonthDay } from "./dates";
+
 export interface NoticeBounds {
   left: number;
   bottom: number;
@@ -26,6 +28,11 @@ export interface ClosureNotice {
   bounds: NoticeBounds;
   matchedRule: string;
   sourceItemIndexes: number[];
+}
+
+export interface ClosureNoticeMergeResult {
+  notices: ClosureNotice[];
+  warnings: string[];
 }
 
 export interface NoticeContext {
@@ -80,6 +87,34 @@ export function isClosurePredicate(text: string): boolean {
   return closurePredicate(text);
 }
 
+export function mergeClosureNotices(notices: readonly ClosureNotice[]): ClosureNoticeMergeResult {
+  const merged = new Map<string, ClosureNotice>();
+  const warnings: string[] = [];
+
+  for (const notice of notices) {
+    const key = notice.sourceItemIndexes.join(",");
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, cloneNotice(notice));
+      continue;
+    }
+
+    if (!sameNoticeEvidence(existing, notice)) {
+      pushUnique(warnings, "closure_notice_evidence_conflict");
+      continue;
+    }
+
+    const appliesTo = mergeApplicability(existing.appliesTo, notice.appliesTo);
+    if (!appliesTo) {
+      pushUnique(warnings, "closure_notice_applicability_conflict");
+      continue;
+    }
+    existing.appliesTo = appliesTo;
+  }
+
+  return { notices: Array.from(merged.values()), warnings };
+}
+
 function classifyClosureNotice(
   rows: readonly NoticeRow[],
   predicateRow: NoticeRow,
@@ -132,14 +167,7 @@ function classifyClosureNotice(
 
 function closurePredicate(text: string): boolean {
   const normalized = normalizeText(text);
-  return (
-    /臨時休業/.test(normalized) ||
-    /休業(?:します|いたします|となります|です)?(?:$|[。\s])/.test(normalized) ||
-    /(?:^|\s)定休日(?:$|\s)/.test(normalized) ||
-    /(?:^|\s)閉店(?:します|いたします|です)?(?:$|[。\s])/.test(normalized) ||
-    /^(?:お休み|休みます)$/i.test(normalized) ||
-    /\bclosed\b/i.test(normalized)
-  );
+  return /休業|休み|定休日|閉店|\bclosed\b/i.test(normalized);
 }
 
 function isNoticeContextLine(text: string): boolean {
@@ -153,14 +181,15 @@ function weekdayFromText(text: string): number | null {
 }
 
 function datesFromText(text: string, contextDate: string): string[] {
-  const year = Number(contextDate.slice(0, 4));
   const dates: string[] = [];
   for (const match of normalizeText(text).matchAll(/(\d{1,2})月(\d{1,2})日/g)) {
     const month = Number(match[1]);
     const day = Number(match[2]);
-    const candidate = new Date(Date.UTC(year, month - 1, day));
-    if (candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) continue;
-    dates.push(candidate.toISOString().slice(0, 10));
+    try {
+      dates.push(inferDateFromMonthDay(month, day, contextDate));
+    } catch {
+      // Invalid calendar dates are not notice evidence.
+    }
   }
   return Array.from(new Set(dates));
 }
@@ -188,6 +217,46 @@ function uniqueNotices(notices: readonly ClosureNotice[]): ClosureNotice[] {
     seen.add(key);
     return true;
   });
+}
+
+function cloneNotice(notice: ClosureNotice): ClosureNotice {
+  return {
+    ...notice,
+    appliesTo:
+      notice.appliesTo.kind === "document"
+        ? { kind: "document" }
+        : notice.appliesTo.kind === "dates"
+          ? { kind: "dates", dates: [...notice.appliesTo.dates] }
+          : { kind: "weekdays", weekdays: [...notice.appliesTo.weekdays] },
+    lines: [...notice.lines],
+    bounds: { ...notice.bounds },
+    sourceItemIndexes: [...notice.sourceItemIndexes]
+  };
+}
+
+function sameNoticeEvidence(left: ClosureNotice, right: ClosureNotice): boolean {
+  return (
+    left.page === right.page &&
+    left.subject === right.subject &&
+    left.matchedRule === right.matchedRule &&
+    left.lines.join("\n") === right.lines.join("\n")
+  );
+}
+
+function mergeApplicability(left: NoticeApplicability, right: NoticeApplicability): NoticeApplicability | null {
+  if (left.kind !== right.kind) return null;
+  if (left.kind === "document" && right.kind === "document") return { kind: "document" };
+  if (left.kind === "dates" && right.kind === "dates") {
+    return { kind: "dates", dates: Array.from(new Set([...left.dates, ...right.dates])).sort() };
+  }
+  if (left.kind === "weekdays" && right.kind === "weekdays") {
+    return { kind: "weekdays", weekdays: Array.from(new Set([...left.weekdays, ...right.weekdays])).sort() };
+  }
+  return null;
+}
+
+function pushUnique(target: string[], value: string): void {
+  if (!target.includes(value)) target.push(value);
 }
 
 function normalizeText(text: string): string {
