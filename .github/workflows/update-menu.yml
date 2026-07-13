@@ -115,3 +115,72 @@ jobs:
 
           echo "Ingest failed after 3 retryable attempts." >&2
           exit 10
+
+  heartbeat:
+    name: Record scheduled workflow heartbeat
+    if: >-
+      ${{
+        github.event_name == 'schedule' &&
+        vars.ENABLE_SCHEDULED_INGEST == 'true'
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Record first scheduled run of the JST week
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          heartbeat_path=".github/scheduled-ingest-heartbeat.json"
+          week="$(TZ=Asia/Tokyo date '+%G-W%V')"
+          recorded_at_local="$(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M:%S')"
+
+          if [ -f "$heartbeat_path" ]; then
+            recorded_week="$(jq -er '.week | select(type == "string")' "$heartbeat_path")"
+            if [ "$recorded_week" = "$week" ]; then
+              echo "Heartbeat already recorded for ${week}."
+              exit 0
+            fi
+          fi
+
+          jq -n \
+            --arg week "$week" \
+            --arg recordedAtLocal "$recorded_at_local" \
+            --arg timeZone "Asia/Tokyo" \
+            --arg workflowRunId "$WORKFLOW_RUN_ID" \
+            --argjson workflowRunAttempt "$WORKFLOW_RUN_ATTEMPT" \
+            --arg workflowRunUrl "$WORKFLOW_RUN_URL" \
+            '{
+              week: $week,
+              recordedAtLocal: $recordedAtLocal,
+              timeZone: $timeZone,
+              workflowRunId: $workflowRunId,
+              workflowRunAttempt: $workflowRunAttempt,
+              workflowRunUrl: $workflowRunUrl
+            }' > "$heartbeat_path"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$heartbeat_path"
+
+          if git diff --cached --quiet; then
+            echo "Heartbeat file is unchanged."
+            exit 0
+          fi
+
+          git commit -m "chore(ops): record scheduled workflow heartbeat (${week})"
+          git pull --rebase origin "$DEFAULT_BRANCH"
+          git push origin "HEAD:${DEFAULT_BRANCH}"
