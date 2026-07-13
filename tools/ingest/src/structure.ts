@@ -104,10 +104,10 @@ export function structureMenuRows(
   }));
   const used = new Set<number>();
   const menuItems: MenuItem[] = [];
-
-  menuItems.push(...structureKoudaiMarkerItems(workingRows, used, profile));
-
   const anchors = buildLabelAnchors(labelRows, profile);
+
+  menuItems.push(...structureKoudaiMarkerItems(workingRows, anchors, used, profile));
+
   if (anchors.length > 0) {
     menuItems.push(...structureLabelBandItems(workingRows, anchors, used, profile));
   }
@@ -126,6 +126,7 @@ export function structureMenuRows(
 
 function structureKoudaiMarkerItems(
   rows: readonly WorkingRow[],
+  anchors: readonly LabelAnchor[],
   used: Set<number>,
   profile: StructureProfile
 ): MenuItem[] {
@@ -136,12 +137,16 @@ function structureKoudaiMarkerItems(
     if (used.has(row.index)) continue;
     const marker = row.text.match(KOUDAI_MARKER_PATTERN);
     if (!marker) continue;
+    const nextCategoryBoundaryY = anchors
+      .filter((anchor) => anchor.y < row.y)
+      .reduce<number | null>((nearest, anchor) => (nearest === null || anchor.y > nearest ? anchor.y : nearest), null);
 
     const nameRows: WorkingRow[] = [];
     let previousY = row.y;
     for (let nextIndex = index + 1; nextIndex < rows.length; nextIndex += 1) {
       const candidate = rows[nextIndex];
       if (candidate.text.match(KOUDAI_MARKER_PATTERN)) break;
+      if (nextCategoryBoundaryY !== null && candidate.y <= nextCategoryBoundaryY + profile.labelBandTolerance) break;
       if (previousY - candidate.y > profile.markerNameMaxGap) break;
       previousY = candidate.y;
 

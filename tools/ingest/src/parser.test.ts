@@ -30,6 +30,64 @@ function fetchedPdf(locationId: IngestSource["locationId"] = "tsudanuma"): Fetch
   };
 }
 
+function mergedPastaRowExtraction(mergedText: string): PdfExtraction {
+  const dates = ["13", "14", "15", "16", "17", "18"];
+  const items: PdfExtraction["items"] = [
+    ...dates.map((day, index) => ({
+      text: `${index === 0 ? "7月" : ""}${day}日（${"月火水木金土"[index]}）`,
+      page: 1,
+      x: 130 + index * 100,
+      y: 700,
+      width: 40,
+      height: 10
+    })),
+    { text: "今週のパスタ", page: 1, x: 20, y: 120, width: 70, height: 10 },
+    { text: "チキンクリーム", page: 1, x: 110, y: 110, width: 80, height: 20 },
+    { text: mergedText, page: 1, x: 330, y: 110, width: 140, height: 20 },
+    { text: "今日のパスタ", page: 1, x: 20, y: 80, width: 70, height: 10 },
+    ...dates.map((day, index) => ({
+      text: `日替り${day}`,
+      page: 1,
+      x: 120 + index * 100,
+      y: 70,
+      width: 60,
+      height: 20
+    }))
+  ];
+  const vertical = (position: number, start: number, end: number, source: "stroke" | "thin_fill") => ({
+    orientation: "vertical" as const,
+    position,
+    start,
+    end,
+    source
+  });
+  const horizontal = (position: number) => ({
+    orientation: "horizontal" as const,
+    position,
+    start: 0,
+    end: 700,
+    source: "stroke" as const
+  });
+  const rulings: NonNullable<PdfExtraction["pageGeometry"]>[number]["rulings"] = [
+    horizontal(60),
+    horizontal(100),
+    horizontal(140)
+  ];
+  for (const position of [100, 200, 600, 700]) rulings.push(vertical(position, 40, 160, "stroke"));
+  for (const position of [300, 400, 500]) {
+    rulings.push(vertical(position, 40, 100, "stroke"));
+    rulings.push(vertical(position + 0.4, 40, 99.8, "thin_fill"));
+    rulings.push(vertical(position, 140, 160, "stroke"));
+  }
+
+  return {
+    pageCount: 1,
+    warnings: [],
+    items,
+    pageGeometry: [{ page: 1, view: { left: 0, bottom: 0, right: 700, top: 800 }, rulings }]
+  };
+}
+
 function parserCharacterizationSnapshot(result: ReturnType<typeof parseLocationPdf>) {
   return Array.from(result.menusByDate.entries()).map(([date, menu]) => ({
     date,
@@ -133,6 +191,49 @@ describe("simple PDF parser", () => {
 
     expect(result.status).toBe("source_changed");
     expect(result.menusByDate.size).toBe(0);
+  });
+
+  it("counts auxiliary operator evidence toward the PDF text limit", () => {
+    const extraction: PdfExtraction = {
+      pageCount: 1,
+      warnings: [],
+      items: [{ text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 }],
+      offPageTextGroups: [
+        {
+          page: 1,
+          side: "left",
+          baselineY: 100,
+          bounds: { left: -40, bottom: 100, right: -10, top: 110 },
+          edgeGap: 10,
+          runs: [
+            {
+              text: "候補",
+              fontName: "name",
+              bounds: { left: -40, bottom: 100, right: -10, top: 110 },
+              sourceRunIndex: 1
+            }
+          ],
+          visibleAnchors: [
+            {
+              text: "可視",
+              fontName: "name",
+              bounds: { left: 10, bottom: 100, right: 30, top: 110 },
+              sourceRunIndex: 2
+            }
+          ]
+        }
+      ]
+    };
+
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      extraction,
+      { ...DEFAULT_PDF_LIMITS, maxTextItemsPerPdf: 2 },
+      "2026-07-03"
+    );
+
+    expect(result.status).toBe("source_changed");
+    expect(result.warnings).toContain("source_pdf_text_item_limit_exceeded");
   });
 
   it("supports omitted month after an explicit month", () => {
@@ -292,6 +393,203 @@ describe("simple PDF parser", () => {
     expect(wednesday?.unassignedLines).not.toContain("¥350");
   });
 
+  it("keeps a day open when a footer says that a different service is closed", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      loadFixture("tsudanuma-20260713.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    const friday = result.menusByDate.get("2026-07-17");
+    expect(friday?.status).toBe("ok");
+    expect(friday?.menuText.rawText).toContain("夏季期間中 休業します");
+    expect(friday?.menuItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "四川風焼肉丼 水ギョーザ", priceYen: 400 }),
+        expect.objectContaining({ name: "唐揚 ピリ辛ソース", priceYen: 350 }),
+        expect.objectContaining({
+          name: "ハンバーグ きのこトマトソース ポテトサラダ",
+          category: "koudai_teishoku",
+          priceYen: 350
+        }),
+        expect.objectContaining({
+          name: "とりムネとパプリカ",
+          category: "higawari_salad",
+          priceYen: 150
+        }),
+        expect.objectContaining({ name: "ビビンバ丼", category: "yu_teishoku", priceYen: 300 })
+      ])
+    );
+    expect(friday?.menuItems.map((item) => item.name)).not.toContain(
+      "ハンバーグ きのこトマトソース ポテトサラダ とりムネとパプリカ"
+    );
+    expect(friday?.parser.warnings).not.toContain("closed_notice_conflicts_with_daily_menu");
+    expect(result.notices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subject: "separate_service",
+          matchedRule: "closure.separate_service.bento_sales",
+          sourceItemIndexes: expect.any(Array)
+        })
+      ])
+    );
+  });
+
+  it("expands merged menu cells from physical rulings without forward-filling text", () => {
+    const dates = ["13", "14", "15", "16", "17", "18"];
+
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      mergedPastaRowExtraction("チキントマトソース"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    const weeklyNames = dates.map((day) =>
+      result.menusByDate
+        .get(`2026-07-${day}`)
+        ?.menuItems.filter((item) => item.categoryLabel === "今週のパスタ")
+        .map((item) => item.name)
+    );
+    expect(weeklyNames).toEqual([
+      ["チキンクリーム"],
+      ["チキントマトソース"],
+      ["チキントマトソース"],
+      ["チキントマトソース"],
+      ["チキントマトソース"],
+      []
+    ]);
+
+    for (const day of dates) {
+      expect(
+        result.menusByDate
+          .get(`2026-07-${day}`)
+          ?.menuItems.filter((item) => item.categoryLabel === "今日のパスタ")
+          .map((item) => item.name)
+      ).toEqual([`日替り${day}`]);
+    }
+  });
+
+  it("applies a merged in-table closure to every physically covered date", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      mergedPastaRowExtraction("臨時休業"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    expect(["13", "14", "15", "16", "17", "18"].map((day) => result.menusByDate.get(`2026-07-${day}`)?.status)).toEqual(
+      ["ok", "closed", "closed", "closed", "closed", "ok"]
+    );
+    expect(result.notices).toEqual([
+      expect.objectContaining({
+        subject: "cafeteria",
+        appliesTo: { kind: "dates", dates: ["2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17"] }
+      })
+    ]);
+  });
+
+  it("keeps an explicit in-table cafeteria closure authoritative over printed menu rows", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items: [
+          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
+          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
+          { text: "＜工大350＞", page: 1, x: 100, y: 650, width: 50, height: 10 },
+          { text: "唐揚", page: 1, x: 100, y: 630, width: 40, height: 10 },
+          { text: "臨時休業", page: 1, x: 100, y: 580, width: 50, height: 10 }
+        ]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    const monday = result.menusByDate.get("2026-07-06");
+    expect(monday?.status).toBe("closed");
+    expect(monday?.menuItems).toEqual([]);
+    expect(monday?.unassignedLines).toContain("臨時休業");
+    expect(monday?.parser.warnings).not.toContain("closure_notice_subject_unknown");
+  });
+
+  it("marks an in-table closed notice without daily menu evidence as closed", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items: [
+          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
+          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
+          { text: "臨時休業", page: 1, x: 100, y: 580, width: 50, height: 10 }
+        ]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    const monday = result.menusByDate.get("2026-07-06");
+    expect(monday?.status).toBe("closed");
+    expect(monday?.menuItems).toEqual([]);
+  });
+
+  it("applies an explicit cafeteria footer closure to the document", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items: [
+          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
+          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
+          { text: "＜工大350＞", page: 1, x: 100, y: 650, width: 50, height: 10 },
+          { text: "唐揚", page: 1, x: 100, y: 630, width: 40, height: 10 },
+          { text: "津田沼食堂は臨時休業します", page: 1, x: 80, y: 200, width: 160, height: 10 }
+        ]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    const monday = result.menusByDate.get("2026-07-06");
+    expect(monday?.status).toBe("closed");
+    expect(monday?.menuItems).toEqual([]);
+    expect(result.notices[0]).toMatchObject({
+      subject: "cafeteria",
+      appliesTo: { kind: "document" },
+      matchedRule: "closure.cafeteria.explicit_subject"
+    });
+  });
+
+  it("preserves an unknown-subject closure for diagnostics without publishing menu items", () => {
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      {
+        pageCount: 1,
+        warnings: [],
+        items: [
+          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
+          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
+          { text: "＜工大350＞", page: 1, x: 100, y: 650, width: 50, height: 10 },
+          { text: "唐揚", page: 1, x: 100, y: 630, width: 40, height: 10 },
+          { text: "施設都合により休業します", page: 1, x: 80, y: 200, width: 150, height: 10 }
+        ]
+      },
+      DEFAULT_PDF_LIMITS,
+      "2026-07-03"
+    );
+
+    const monday = result.menusByDate.get("2026-07-06");
+    expect(monday?.status).toBe("unknown");
+    expect(monday?.menuItems).toEqual([]);
+    expect(monday?.menuText.rawText).toContain("施設都合により休業します");
+    expect(monday?.unassignedLines).toContain("施設都合により休業します");
+    expect(monday?.parser.warnings).toContain("closure_notice_subject_unknown");
+  });
+
   it("structures current New Narashino fixtures without the known high-confidence false items", () => {
     const firstFloor = parseLocationPdf(
       fetchedPdf("shinnarashino-1f"),
@@ -335,6 +633,111 @@ describe("simple PDF parser", () => {
     expect(secondFloorFriday?.menuItems.some((item) => item.category === "unknown")).toBe(false);
     expect(secondFloorFriday?.menuItems.map((item) => item.name)).not.toEqual(
       expect.arrayContaining(["ホームパン¥", "2F食堂"])
+    );
+  });
+
+  it("keeps recovered edge glyphs without rewriting unrelated menu text", () => {
+    const result = parseLocationPdf(
+      fetchedPdf("shinnarashino-1f"),
+      loadFixture("shinnarashino-1f-20260713.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    const tuesday = result.menusByDate.get("2026-07-14");
+    expect(tuesday?.menuItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "teishoku",
+          name: "ミックスフライ 白身フライ・エビフライ・チキンカツ",
+          priceYen: 350
+        })
+      ])
+    );
+
+    const wednesday = result.menusByDate.get("2026-07-15");
+    expect(wednesday?.menuItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "teishoku", name: "玉子の ビビンバ丼", priceYen: 350 })
+      ])
+    );
+    expect(wednesday?.menuItems.map((item) => item.name).join("\n")).not.toContain("温玉のせ");
+    expect(result.warnings).not.toContain("pdf_text_edge_affix_recovery_ambiguous");
+  });
+
+  it("adds complete page-edge side dishes to published weekdays only", () => {
+    const result = parseLocationPdf(
+      fetchedPdf("shinnarashino-1f"),
+      loadFixture("shinnarashino-1f-20260713.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    for (const day of ["13", "14", "15", "16", "17"]) {
+      const sideDishes = result.menusByDate
+        .get(`2026-07-${day}`)
+        ?.menuItems.filter((item) => item.category === "side_dish")
+        .map((item) => [item.name, item.priceYen]);
+      expect(sideDishes).toEqual([
+        ["ライス", 100],
+        ["唐揚", 150],
+        ["コロッケ", 50],
+        ["サラダ", 50],
+        ["味噌汁", 50]
+      ]);
+    }
+
+    const saturday = result.menusByDate.get("2026-07-18");
+    expect(saturday?.status).toBe("not_published");
+    expect(saturday?.menuItems).toEqual([]);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pdf_text_edge_shared_item_recovered",
+          rowId: "shinnarashino-1f:side_dish",
+          name: "ライス",
+          priceYen: 100
+        }),
+        expect.objectContaining({
+          code: "pdf_text_edge_shared_item_recovered",
+          rowId: "shinnarashino-1f:side_dish",
+          name: "味噌汁",
+          priceYen: 50
+        })
+      ])
+    );
+  });
+
+  it("keeps label-named and edge-completed curry items on published weekdays", () => {
+    const result = parseLocationPdf(
+      fetchedPdf("shinnarashino-1f"),
+      loadFixture("shinnarashino-1f-20260713.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    for (const day of ["13", "14", "15", "16", "17"]) {
+      const curries = result.menusByDate
+        .get(`2026-07-${day}`)
+        ?.menuItems.filter((item) => item.category === "curry")
+        .map((item) => [item.name, item.priceYen]);
+      expect(curries).toEqual([
+        ["カレー", 250],
+        ["サラダ付カレー", 300],
+        ["大盛カレー", 300]
+      ]);
+    }
+
+    expect(result.menusByDate.get("2026-07-18")?.menuItems).toEqual([]);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pdf_text_edge_shared_item_recovered",
+          rowId: "shinnarashino-1f:curry",
+          name: "大盛カレー",
+          priceYen: 300
+        })
+      ])
     );
   });
 

@@ -8,9 +8,15 @@ import {
   type MenuItem
 } from "@cit-cafeteria/schema";
 import { inferDateFromMonthDay, mondayWeekStart, parseDateOnly } from "./dates";
+import { appliesToDate, type ClosureNotice, findClosureNotices, mergeClosureNotices, type NoticeRow } from "./notices";
 import type { FetchedPdf, PdfExtraction, PdfLimits, PdfTextItem } from "./pdf";
 import type { IngestSource } from "./sources";
 import { type ColumnRow, DEFAULT_STRUCTURE_PROFILE, type StructureProfile, structureMenuRows } from "./structure";
+import { inferMergedColumnSpans } from "./tableGeometry";
+import { parseSharedPricePairs } from "./sharedPriceTokens";
+import { resolveSharedRowOverflow, type SharedRowBand, type SharedRowOverflowDiagnostic } from "./sharedRowOverflow";
+
+export type LocationParserDiagnostic = NonNullable<PdfExtraction["diagnostics"]>[number] | SharedRowOverflowDiagnostic;
 
 export interface LocationParseResult {
   locationId: LocationId;
@@ -20,7 +26,9 @@ export interface LocationParseResult {
   statusMessage: string;
   warnings: string[];
   menusByDate: Map<string, LocationMenu>;
-  closedDates: Map<string, string>;
+  fallbackStatuses: Map<string, FallbackStatus>;
+  notices: ClosureNotice[];
+  diagnostics?: LocationParserDiagnostic[];
 }
 
 interface DateHeader {
@@ -41,6 +49,7 @@ interface LocationParserProfile {
 interface ExtractColumnRowsOptions {
   bottomY?: number;
   excludeYRanges?: readonly YRange[];
+  additionalItemIndexes?: ReadonlySet<number>;
 }
 
 interface YRange {
@@ -48,7 +57,16 @@ interface YRange {
   max: number;
 }
 
+interface ExtractedColumnRow extends ColumnRow, NoticeRow {}
+
+export interface FallbackStatus {
+  status: "closed" | "unknown";
+  reason: string;
+  warnings: string[];
+}
+
 interface SharedRowProfile {
+  id: string;
   label: string;
   category: MenuCategory;
   categoryLabel: string;
@@ -96,6 +114,7 @@ const SHINNARASHINO_1F_PROFILE: LocationParserProfile = {
   metaOnlyStatus: "not_published",
   sharedRows: [
     {
+      id: "shinnarashino-1f:curry",
       label: "カレー",
       category: "curry",
       categoryLabel: "カレー",
@@ -105,6 +124,7 @@ const SHINNARASHINO_1F_PROFILE: LocationParserProfile = {
       warningSlug: "shared:curry"
     },
     {
+      id: "shinnarashino-1f:side_dish",
       label: "単品",
       category: "side_dish",
       categoryLabel: "単品",
@@ -132,6 +152,7 @@ const SHINNARASHINO_2F_PROFILE: LocationParserProfile = {
   metaOnlyStatus: "not_published",
   sharedRows: [
     {
+      id: "shinnarashino-2f:side_dish",
       label: "小鉢",
       category: "side_dish",
       categoryLabel: "小鉢",
@@ -170,7 +191,12 @@ export function parseLocationPdf(
     );
   }
 
-  if (extraction.items.length > limits.maxTextItemsPerPdf) {
+  const auxiliaryTextRunIndexes = new Set(
+    (extraction.offPageTextGroups ?? []).flatMap((group) =>
+      [...group.runs, ...group.visibleAnchors].map((run) => `${group.page}:${run.sourceRunIndex}`)
+    )
+  );
+  if (extraction.items.length + auxiliaryTextRunIndexes.size > limits.maxTextItemsPerPdf) {
     return failedResult(pdf.source, sourceInfo, "source_changed", "PDF text item count exceeded the parser limit.", [
       ...warnings,
       "source_pdf_text_item_limit_exceeded"
@@ -184,43 +210,94 @@ export function parseLocationPdf(
 
   const menusByDate = new Map<string, LocationMenu>();
   const { columns, blockCount } = computeHeaderColumns(headers);
-  const closedDates = detectClosedDates(extraction.items, headers);
-  const sharedRows = collectSharedRows(extraction.items, profile);
+  const columnSpans = inferMergedColumnSpans(
+    extraction.items,
+    columns.map((column) => ({ page: column.header.page, left: column.left, right: column.right })),
+    extraction.pageGeometry ?? [],
+    {
+      excludedItemIndexes: new Set(headers.map((header) => extraction.items.indexOf(header.item)))
+    }
+  );
+  const geometryWarnings = columnSpans.warnings;
+  const sharedRows = collectSharedRows(extraction.items, profile, extraction.offPageTextGroups ?? []);
   const profileWarnings = [...sharedRows.warnings];
   if (blockCount > 1) {
     warnings.push("multi_block_layout_detected");
   }
 
-  for (const { header, left, right, labelLeft, labelRight } of columns) {
+  const columnContexts = columns.map(({ header, left, right, labelLeft, labelRight }, columnIndex) => {
+    const additionalItemIndexes = new Set(
+      Array.from(columnSpans.spansByItemIndex)
+        .filter(([, span]) => columnIndex >= span.firstColumn && columnIndex < span.lastColumnExclusive)
+        .map(([itemIndex]) => itemIndex)
+    );
+    const noticeRows = extractColumnRows(extraction.items, header, left, right, { additionalItemIndexes });
     const rows = extractColumnRows(extraction.items, header, left, right, {
       bottomY: sharedRows.columnBottomY,
-      excludeYRanges: sharedRows.excludeYRanges
+      excludeYRanges: sharedRows.excludeYRanges,
+      additionalItemIndexes
     });
     const labelRows = extractColumnRows(extraction.items, header, labelLeft, labelRight);
-    const dailyRows = collectDailyRows(rows, labelRows, profile);
+    const tableBottomY = inferMenuTableBottomY(labelRows, profile.structure);
+    const spanWarnings = columnSpans.ambiguousItemIndexes.some((itemIndex) => {
+      const item = extraction.items[itemIndex];
+      const center = item.x + item.width / 2;
+      return item.page === header.page && center >= left && center < right;
+    })
+      ? ["ambiguous_column_span_not_expanded"]
+      : [];
+    return { header, rows, noticeRows, labelRows, tableBottomY, spanWarnings };
+  });
+  const noticeResolution = mergeClosureNotices([
+    ...columnContexts.flatMap(({ header, noticeRows, tableBottomY }) =>
+      findClosureNotices(noticeRows, {
+        date: header.date,
+        insideTable: (row) => tableBottomY !== undefined && row.y >= tableBottomY,
+        isBarrier: (row) => isNoticeBarrier(row.text, profile.structure)
+      })
+    ),
+    ...standaloneWeekdayNotices(extraction.items, headers)
+  ]);
+  const notices = noticeResolution.notices;
+  pushUniqueWarnings(profileWarnings, noticeResolution.warnings);
+  const fallbackStatuses = fallbackStatusesFromNotices(notices, headers);
+
+  for (const { header, rows, labelRows, spanWarnings } of columnContexts) {
+    const applicableNotices = notices.filter((notice) => appliesToDate(notice, header.date));
+    const noticeItemIndexes = new Set(applicableNotices.flatMap((notice) => notice.sourceItemIndexes));
+    const menuRows = rows.filter((row) => !row.sourceItemIndexes.some((index) => noticeItemIndexes.has(index)));
+    const noticeRows = rows.filter((row) => row.sourceItemIndexes.some((index) => noticeItemIndexes.has(index)));
+    const dailyRows = collectDailyRows(menuRows, labelRows, profile);
     pushUniqueWarnings(profileWarnings, dailyRows.warnings);
-    const structureRows = rows.filter((row) => !isRowInYRanges(row, dailyRows.excludeYRanges));
-    const rawLines = rows.map((row) => row.text);
+    const structureRows = menuRows.filter((row) => !isRowInYRanges(row, dailyRows.excludeYRanges));
+    const rawLines = appendMissingLines(
+      rows.map((row) => row.text),
+      applicableNotices.flatMap((notice) => notice.lines)
+    );
     const {
       rawText,
       lines,
       warnings: lineWarnings
     } = normalizeLines(rawLines, limits.maxRawTextCharsPerLocationPerDate);
-    const status = statusForRawText(rawText, profile);
+    const status = statusForNotices(applicableNotices) ?? statusForRawText(rawText, profile);
     const locationWarnings = uniqueWarnings([
       ...warnings,
       ...sharedRows.warnings,
       ...dailyRows.warnings,
-      ...lineWarnings
+      ...spanWarnings,
+      ...noticeResolution.warnings,
+      ...lineWarnings,
+      ...(status === "unknown" ? ["closure_notice_subject_unknown"] : [])
     ]);
     const structured =
       status === "ok"
         ? structureMenuRows(structureRows, labelRows, profile.structure)
         : { menuItems: [], unassignedLines: lines };
-    const menuItems =
-      status === "ok"
-        ? [...structured.menuItems, ...dailyRows.menuItems, ...sharedRows.menuItems]
-        : structured.menuItems;
+    const menuItems = status === "ok" ? [...structured.menuItems, ...dailyRows.menuItems, ...sharedRows.menuItems] : [];
+    const unassignedLines = appendMissingLines(
+      status === "ok" ? [...structured.unassignedLines, ...noticeRows.map((row) => row.text)] : lines,
+      applicableNotices.flatMap((notice) => notice.lines)
+    );
 
     menusByDate.set(header.date, {
       ...locationBase(pdf.source.locationId),
@@ -232,7 +309,7 @@ export function parseLocationPdf(
         lines
       },
       menuItems,
-      unassignedLines: structured.unassignedLines,
+      unassignedLines,
       parser: {
         version: "simple-column-v2",
         confidence: confidenceFor(status, locationWarnings),
@@ -248,9 +325,11 @@ export function parseLocationPdf(
     sourceInfo,
     status: "ok",
     statusMessage: "Parsed PDF date columns.",
-    warnings: uniqueWarnings([...warnings, ...profileWarnings]),
+    warnings: uniqueWarnings([...warnings, ...profileWarnings, ...geometryWarnings]),
     menusByDate,
-    closedDates
+    fallbackStatuses,
+    notices,
+    diagnostics: [...(extraction.diagnostics ?? []), ...sharedRows.diagnostics]
   };
 }
 
@@ -274,14 +353,14 @@ export function failedLocationResult(
 
 export function fallbackLocationMenu(result: LocationParseResult, date: string): LocationMenu {
   if (result.status === "ok") {
-    const closedReason = result.closedDates.get(date);
-    if (closedReason) {
+    const fallback = result.fallbackStatuses.get(date);
+    if (fallback) {
       return createEmptyLocationMenu(
         result.locationId,
-        "closed",
-        `The source indicates this location is closed on ${date}: ${closedReason}.`,
+        fallback.status,
+        `The source indicates this location is ${fallback.status} on ${date}: ${fallback.reason}.`,
         result.sourceInfo,
-        result.warnings
+        [...result.warnings, ...fallback.warnings]
       );
     }
 
@@ -318,7 +397,8 @@ function failedResult(
     statusMessage,
     warnings,
     menusByDate: new Map(),
-    closedDates: new Map()
+    fallbackStatuses: new Map(),
+    notices: []
   };
 }
 
@@ -474,26 +554,50 @@ function extractColumnRows(
   left: number,
   right: number,
   options: ExtractColumnRowsOptions = {}
-): ColumnRow[] {
+): ExtractedColumnRow[] {
   const candidates = items
-    .filter((item) => item.page === header.page)
-    .filter((item) => item !== header.item)
-    .filter((item) => item.x + item.width / 2 >= left && item.x + item.width / 2 < right)
-    .filter((item) => item.y < header.y - 2)
-    .filter((item) => options.bottomY === undefined || item.y >= options.bottomY)
-    .filter((item) => !options.excludeYRanges?.some((range) => item.y >= range.min && item.y <= range.max))
-    .sort((a, b) => b.y - a.y || a.x - b.x);
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.page === header.page)
+    .filter(({ item }) => item !== header.item)
+    .filter(
+      ({ item, index }) =>
+        (item.x + item.width / 2 >= left && item.x + item.width / 2 < right) ||
+        options.additionalItemIndexes?.has(index)
+    )
+    .filter(({ item }) => item.y < header.y - 2)
+    .filter(({ item }) => options.bottomY === undefined || item.y >= options.bottomY)
+    .filter(({ item }) => !options.excludeYRanges?.some((range) => item.y >= range.min && item.y <= range.max))
+    .sort((a, b) => b.item.y - a.item.y || a.item.x - b.item.x);
 
-  const grouped: Array<{ y: number; texts: Array<{ x: number; text: string }> }> = [];
-  for (const item of candidates) {
+  const grouped: Array<{
+    y: number;
+    page: number;
+    texts: Array<{ x: number; text: string }>;
+    bounds: ExtractedColumnRow["bounds"];
+    sourceItemIndexes: number[];
+  }> = [];
+  for (const { item, index } of candidates) {
     const text = normalizeText(item.text);
     if (!text) continue;
     const existing = grouped.find((group) => Math.abs(group.y - item.y) <= 3);
     if (existing) {
       existing.texts.push({ x: item.x, text });
       existing.y = (existing.y + item.y) / 2;
+      existing.bounds = {
+        left: Math.min(existing.bounds.left, item.x),
+        bottom: Math.min(existing.bounds.bottom, item.y),
+        right: Math.max(existing.bounds.right, item.x + item.width),
+        top: Math.max(existing.bounds.top, item.y + item.height)
+      };
+      existing.sourceItemIndexes.push(index);
     } else {
-      grouped.push({ y: item.y, texts: [{ x: item.x, text }] });
+      grouped.push({
+        y: item.y,
+        page: item.page,
+        texts: [{ x: item.x, text }],
+        bounds: { left: item.x, bottom: item.y, right: item.x + item.width, top: item.y + item.height },
+        sourceItemIndexes: [index]
+      });
     }
   }
 
@@ -502,22 +606,48 @@ function extractColumnRows(
     return {
       y: group.y,
       texts,
-      text: texts.join(" ")
+      text: texts.join(" "),
+      page: group.page,
+      bounds: group.bounds,
+      sourceItemIndexes: group.sourceItemIndexes.sort((a, b) => a - b)
     };
   });
 }
 
 function collectSharedRows(
   items: readonly PdfTextItem[],
-  profile: LocationParserProfile
-): { menuItems: MenuItem[]; excludeYRanges: YRange[]; warnings: string[]; columnBottomY?: number } {
+  profile: LocationParserProfile,
+  overflowGroups: NonNullable<PdfExtraction["offPageTextGroups"]>
+): {
+  menuItems: MenuItem[];
+  excludeYRanges: YRange[];
+  warnings: string[];
+  diagnostics: SharedRowOverflowDiagnostic[];
+  columnBottomY?: number;
+} {
   const menuItems: MenuItem[] = [];
   const excludeYRanges: YRange[] = [];
   const warnings: string[] = [];
   let columnBottomY: number | undefined;
+  const labels = new Map<string, PdfTextItem>();
+  const bands: SharedRowBand[] = [];
 
   for (const rule of profile.sharedRows ?? []) {
     const label = items.find((item) => normalizeText(item.text) === rule.label && item.x <= rule.labelMaxX);
+    if (!label) continue;
+    labels.set(rule.id, label);
+    bands.push({
+      id: rule.id,
+      page: label.page,
+      minY: label.y - rule.maxBelow,
+      maxY: label.y + rule.maxAbove
+    });
+  }
+  const overflow = resolveSharedRowOverflow(overflowGroups, bands);
+  warnings.push(...overflow.warnings);
+
+  for (const rule of profile.sharedRows ?? []) {
+    const label = labels.get(rule.id);
     if (!label) {
       warnings.push(profileRowsNotDetectedWarning(rule.warningSlug));
       continue;
@@ -529,14 +659,31 @@ function collectSharedRows(
       columnBottomY = columnBottomY === undefined ? bottomY : Math.min(columnBottomY, bottomY);
     }
 
-    const rowItems = items.filter((item) => item.page === label.page && item.y >= range.min && item.y <= range.max);
+    const rowItems = items.filter(
+      (item) => item !== label && item.page === label.page && item.y >= range.min && item.y <= range.max
+    );
     const parsed = parseSharedPriceItems(rowItems, rule);
+    const recovered = overflow.recoveredByRowId.get(rule.id) ?? [];
+    const leftRecovered = recovered
+      .filter((item) => item.side === "left")
+      .sort((left, right) => left.bounds.left - right.bounds.left)
+      .map((item) => sharedMenuItem(item.name, item.priceYen, rule));
+    const rightRecovered = recovered
+      .filter((item) => item.side === "right")
+      .sort((left, right) => left.bounds.left - right.bounds.left)
+      .map((item) => sharedMenuItem(item.name, item.priceYen, rule));
 
     excludeYRanges.push(range);
-    menuItems.push(...parsed);
+    menuItems.push(...leftRecovered, ...parsed, ...rightRecovered);
   }
 
-  return { menuItems: uniqueMenuItems(menuItems), excludeYRanges, warnings: uniqueWarnings(warnings), columnBottomY };
+  return {
+    menuItems: uniqueMenuItems(menuItems),
+    excludeYRanges,
+    warnings: uniqueWarnings(warnings),
+    diagnostics: overflow.diagnostics,
+    columnBottomY
+  };
 }
 
 function collectDailyRows(
@@ -601,22 +748,11 @@ function parseSharedPriceItems(items: readonly PdfTextItem[], rule: SharedRowPro
   const menuItems: MenuItem[] = [];
 
   for (const rowTokens of groupSharedRowTokens(items)) {
-    const tokens = rowTokens.filter((token) => token !== rule.label && !/^[~～]$/.test(token));
-    for (let index = 0; index < tokens.length; index += 1) {
-      const token = tokens[index];
-
-      const priceMarkerIndex = token.search(/[¥\\]/);
-      if (priceMarkerIndex < 0) continue;
-
-      const name = cleanSharedItemName(token.slice(0, priceMarkerIndex), rule);
-      let priceText = token.slice(priceMarkerIndex + 1).replace(/\D/g, "");
-      while (index + 1 < tokens.length && isDigitToken(tokens[index + 1])) {
-        index += 1;
-        priceText += tokens[index].replace(/\D/g, "");
-      }
-
-      if (!name || !priceText) continue;
-      menuItems.push(sharedMenuItem(name, Number(priceText), rule));
+    const tokens = rowTokens.filter((token) => !/^[~～]$/.test(token));
+    for (const pair of parseSharedPricePairs(tokens)) {
+      const name = cleanSharedItemName(pair.name, rule);
+      if (!name) continue;
+      menuItems.push(sharedMenuItem(name, pair.priceYen, rule));
     }
   }
 
@@ -642,7 +778,6 @@ function groupSharedRowTokens(items: readonly PdfTextItem[]): string[][] {
 
 function cleanSharedItemName(name: string, rule: SharedRowProfile): string {
   const normalized = normalizeText(name).replace(/\s+/g, "");
-  if (normalized === rule.label) return "";
   if (normalized && normalized.length < rule.label.length && rule.label.endsWith(normalized)) return rule.label;
   return normalized;
 }
@@ -659,10 +794,6 @@ function pushUniqueWarnings(target: string[], warnings: readonly string[]): void
 
 function uniqueWarnings(warnings: readonly string[]): string[] {
   return Array.from(new Set(warnings));
-}
-
-function isDigitToken(text: string): boolean {
-  return /^\d+$/.test(normalizeText(text));
 }
 
 function parsePriceOnly(text: string): number | null {
@@ -736,12 +867,96 @@ function statusForRawText(
   profile: LocationParserProfile = DEFAULT_LOCATION_PROFILE
 ): LocationStatus {
   if (!rawText) return "not_published";
-  const statusLines = rawText.split("\n").filter((line) => !isWeekdayClosedNotice(line));
-  const meaningfulLines = statusLines.filter((line) => !isMetaLineForStatus(line, profile.structure));
+  const meaningfulLines = rawText.split("\n").filter((line) => !isMetaLineForStatus(line, profile.structure));
   if (meaningfulLines.length === 0 && profile.metaOnlyStatus) return profile.metaOnlyStatus;
-  const statusText = statusLines.join("\n");
-  if (/(休業|休み|閉店|定休日|closed)/i.test(statusText)) return "closed";
   return "ok";
+}
+
+function statusForNotices(notices: readonly ClosureNotice[]): LocationStatus | null {
+  if (notices.some((notice) => notice.subject === "cafeteria")) return "closed";
+  if (notices.some((notice) => notice.subject === "unknown")) return "unknown";
+  return null;
+}
+
+function isNoticeBarrier(text: string, profile: StructureProfile): boolean {
+  const normalized = normalizeText(text);
+  if (!normalized) return true;
+  if (/^(?:¥|\\)\s*\d{2,5}$/.test(normalized)) return true;
+  if (dateMatches(normalized).length > 0) return true;
+  const label = normalized
+    .replace(/(?:¥|\\)\s*\d{2,5}/g, "")
+    .replace(/^<(.+)>$/, "$1")
+    .trim();
+  return profile.categoryByLabel.some((rule) => rule.pattern.test(label));
+}
+
+function fallbackStatusesFromNotices(
+  notices: readonly ClosureNotice[],
+  headers: readonly DateHeader[]
+): Map<string, FallbackStatus> {
+  const statuses = new Map<string, FallbackStatus>();
+  const headerDates = new Set(headers.map((header) => header.date));
+  const candidateDates = new Set<string>();
+
+  for (const weekStart of new Set(headers.map((header) => mondayWeekStart(header.date)))) {
+    for (let weekday = 0; weekday < 7; weekday += 1) candidateDates.add(dateForWeekday(weekStart, weekday));
+  }
+  for (const notice of notices) {
+    if (notice.appliesTo.kind === "dates") {
+      for (const date of notice.appliesTo.dates) candidateDates.add(date);
+    }
+  }
+
+  for (const date of candidateDates) {
+    if (headerDates.has(date)) continue;
+    const applicable = notices.filter((notice) => appliesToDate(notice, date));
+    const status = statusForNotices(applicable);
+    if (status !== "closed" && status !== "unknown") continue;
+    const relevant = applicable.filter((notice) =>
+      status === "closed" ? notice.subject === "cafeteria" : notice.subject === "unknown"
+    );
+    statuses.set(date, {
+      status,
+      reason: uniqueLines(relevant.flatMap((notice) => notice.lines)).join(" "),
+      warnings: status === "unknown" ? ["closure_notice_subject_unknown"] : []
+    });
+  }
+
+  return statuses;
+}
+
+function standaloneWeekdayNotices(items: readonly PdfTextItem[], headers: readonly DateHeader[]): ClosureNotice[] {
+  const contextDate = headers[0]?.date;
+  if (!contextDate) return [];
+  return items.flatMap((item, index) => {
+    const text = normalizeText(item.text);
+    const match = text.match(/^([日月火水木金土])曜日休業$/);
+    const weekday = match ? WEEKDAY_INDEX_BY_JA.get(match[1]) : undefined;
+    if (weekday === undefined) return [];
+    return [
+      {
+        subject: "cafeteria" as const,
+        appliesTo: { kind: "weekdays" as const, weekdays: [weekday] },
+        lines: [text],
+        page: item.page,
+        bounds: { left: item.x, bottom: item.y, right: item.x + item.width, top: item.y + item.height },
+        matchedRule: "closure.cafeteria.weekday_schedule",
+        sourceItemIndexes: [index]
+      }
+    ];
+  });
+}
+
+function inferMenuTableBottomY(labelRows: readonly ColumnRow[], profile: StructureProfile): number | undefined {
+  const categoryLabels = labelRows.filter((row) => {
+    const label = normalizeText(row.text)
+      .replace(/(?:¥|\\)\s*\d{2,5}/g, "")
+      .replace(/^<(.+)>$/, "$1")
+      .trim();
+    return profile.categoryByLabel.some((rule) => rule.pattern.test(label));
+  });
+  if (categoryLabels.length === 0) return undefined;
+  return Math.min(...categoryLabels.map((row) => row.y)) - profile.labelMaxNameDepth;
 }
 
 function isMetaLineForStatus(text: string, profile: StructureProfile): boolean {
@@ -759,40 +974,23 @@ const WEEKDAY_INDEX_BY_JA = new Map([
   ["土", 6]
 ]);
 
-function detectClosedDates(items: readonly PdfTextItem[], headers: readonly DateHeader[]): Map<string, string> {
-  const closedWeekdays = new Map<number, string>();
-  for (const item of items) {
-    const text = normalizeText(item.text);
-    const match = text.match(/^([日月火水木金土])曜日休業$/);
-    if (!match) continue;
-    const weekday = WEEKDAY_INDEX_BY_JA.get(match[1]);
-    if (weekday === undefined) continue;
-    closedWeekdays.set(weekday, text);
-  }
-
-  const closedDates = new Map<string, string>();
-  if (closedWeekdays.size === 0) return closedDates;
-
-  const headerDates = new Set(headers.map((header) => header.date));
-  const weekStarts = Array.from(new Set(headers.map((header) => mondayWeekStart(header.date))));
-  for (const weekStart of weekStarts) {
-    for (const [weekday, reason] of closedWeekdays) {
-      const date = dateForWeekday(weekStart, weekday);
-      if (!headerDates.has(date)) closedDates.set(date, reason);
-    }
-  }
-
-  return closedDates;
-}
-
 function dateForWeekday(weekStart: string, weekday: number): string {
   const date = parseDateOnly(weekStart);
   date.setUTCDate(date.getUTCDate() + ((weekday + 6) % 7));
   return date.toISOString().slice(0, 10);
 }
 
-function isWeekdayClosedNotice(text: string): boolean {
-  return /^[日月火水木金土]曜日休業$/.test(normalizeText(text));
+function uniqueLines(lines: readonly string[]): string[] {
+  return Array.from(new Set(lines.map((line) => normalizeText(line)).filter(Boolean)));
+}
+
+function appendMissingLines(lines: readonly string[], additions: readonly string[]): string[] {
+  const result = [...lines];
+  for (const line of additions) {
+    const normalized = normalizeText(line);
+    if (normalized && !result.some((existing) => normalizeText(existing) === normalized)) result.push(normalized);
+  }
+  return result;
 }
 
 function statusMessageFor(status: LocationStatus): string {

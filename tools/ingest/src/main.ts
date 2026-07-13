@@ -14,6 +14,7 @@ import { CloudflareKvReadError, getKvValue, type CloudflareKvConfig, uploadKvWri
 import { isPausedOn, loadPausePeriods } from "./pauses";
 import { failedLocationResult, type LocationParseResult, parseLocationPdf } from "./parser";
 import { DEFAULT_PDF_LIMITS, extractTextItemsFromPdf, fetchPdf, PdfFetchError, type PdfLimits } from "./pdf";
+import { aggregateGeneratedRun } from "./runOutcome";
 import { discoverSourcesFromHtml, fallbackSources, type IngestSource } from "./sources";
 
 export interface IngestEnv {
@@ -47,6 +48,12 @@ export interface RunIngestOptions {
   fetchImpl?: typeof fetch;
   upload?: (config: CloudflareKvConfig, writes: readonly KvWrite[]) => Promise<void>;
   readKvValue?: (config: CloudflareKvConfig, key: string) => Promise<string | null>;
+  ingestLocation?: (
+    source: IngestSource,
+    limits: PdfLimits,
+    targetDate: string,
+    fetchImpl: typeof fetch
+  ) => Promise<LocationParseResult>;
   pauseConfigPath?: string;
   now?: Date;
 }
@@ -113,19 +120,20 @@ export async function runIngest(options: RunIngestOptions = {}): Promise<RunInge
 
   const discovery = await discoverSources(fetchImpl);
   const results: LocationParseResult[] = [];
+  const ingest = options.ingestLocation ?? ingestLocation;
 
   for (const source of discovery.sources) {
-    results.push(await ingestLocation(source, limits, targetDate, fetchImpl));
+    results.push(await ingest(source, limits, targetDate, fetchImpl));
   }
 
   const generated = generateMenuDocuments(results, generatedAt);
+  const generatedOutcome = generated.dates.length > 0 ? aggregateGeneratedRun(generated.days) : null;
   const health: HealthResponse = {
-    status:
-      generated.dates.length === 0 ? "failed" : results.some((result) => result.status !== "ok") ? "degraded" : "ok",
+    status: generatedOutcome?.healthStatus ?? "failed",
     checkedAt: generatedAt,
     generatedAt,
     weekStartDate,
-    lastError: generated.dates.length === 0 ? "No menu documents were generated." : null
+    lastError: generatedOutcome ? generatedOutcome.lastError : "No menu documents were generated."
   };
 
   await reportIngestSummary({
@@ -167,6 +175,10 @@ export async function runIngest(options: RunIngestOptions = {}): Promise<RunInge
 
   if (generated.dates.length === 0) {
     throw classifyEmptyRun(results, discovery.warnings);
+  }
+
+  if (generatedOutcome?.rejectAfterUpload) {
+    throw new IngestRunError(generatedOutcome.lastError ?? "All generated location days were untrusted.", false);
   }
 
   return { writes, dates: generated.dates };
@@ -445,9 +457,13 @@ function logIngestSummary(summary: IngestSummary): void {
         `status=${result.status}`,
         `dates=${result.menusByDate.size}`,
         `warnings=${result.warnings.length > 0 ? result.warnings.join(",") : "none"}`,
+        `diagnostics=${result.diagnostics?.length ?? 0}`,
         `message=${JSON.stringify(result.statusMessage)}`
       ].join(" ")
     );
+    for (const diagnostic of result.diagnostics ?? []) {
+      console.log(`Location ${result.locationId} diagnostic: ${JSON.stringify(diagnostic)}`);
+    }
   }
 }
 
@@ -467,8 +483,8 @@ function githubStepSummary(summary: IngestSummary): string {
     lines.push(`- Source discovery warnings: \`${summary.discoveryWarnings.join(", ")}\``, "");
   }
 
-  lines.push("| Location | Status | Dates | Warnings | Message |");
-  lines.push("| --- | --- | ---: | --- | --- |");
+  lines.push("| Location | Status | Dates | Warnings | Diagnostics | Message |");
+  lines.push("| --- | --- | ---: | --- | ---: | --- |");
   for (const result of summary.results) {
     lines.push(
       `| ${[
@@ -476,6 +492,7 @@ function githubStepSummary(summary: IngestSummary): string {
         markdownTableCell(result.status),
         String(result.menusByDate.size),
         markdownTableCell(result.warnings.length > 0 ? result.warnings.join(", ") : "none"),
+        String(result.diagnostics?.length ?? 0),
         markdownTableCell(result.statusMessage)
       ].join(" | ")} |`
     );

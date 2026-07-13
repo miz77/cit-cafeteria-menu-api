@@ -59,6 +59,17 @@ gh variable set ENABLE_SCHEDULED_INGEST --body true
 各 workflow run は、再試行で回復する可能性がある ingest または upload の失敗だけを最大 3 回再試行します。
 parse 失敗、`source_changed`、secrets の不足、休業設定の破損など、再試行しても回復しない失敗は再試行しません。
 
+### status と health
+
+メニュー endpoint の `overallStatus` と ingest の health は別の指標です。`overallStatus` はその日・週の公開データの充足度を表し、health は今回の解析結果を運用上信頼できるかを表します。
+
+- `closed` は休業を正常に判定できた状態、`not_published` はメニュー未掲載の状態として、どちらも ingest health を悪化させません。
+- 一部の日・食堂だけが `unknown`、取得失敗、解析失敗などの場合、health は `degraded` です。診断用データを含むKVは更新し、生成済みskipは行いません。
+- 生成した全日・全食堂が不確実な場合、healthを `failed` として診断用KVを更新した後、非再試行エラーで終了します。dry-runは同じ成果物を出力して成功終了します。
+- 日付を1件も生成できなかった場合は従来どおり、原因に応じて再試行可能性を判定します。
+
+KV書き込みは逐次処理でありtransactionではありません。失敗調査では `health:v1:current`、`health:v1:last-error`、`source:v1:week:current` とGitHub Actionsのsummaryを併せて確認してください。`unknown` の日も `menuText.rawText`、`unassignedLines`、parser warningを保持しますが、誤配信を避けるため `menuItems` は空になります。
+
 手動実行では `YYYY-MM-DD` 形式の `target_date` を任意で指定できます。
 `force=true` を指定すると、今週分が生成済みでもCITサービスから再取得します。
 週中の PDF 訂正を反映する場合や、長期休業明けの再開日に手動更新する場合は `force=true` を指定してください。
@@ -139,3 +150,36 @@ pnpm --filter @cit-cafeteria/api-worker check:bundle
 3. GitHub Actions の run log または step summary にある食堂別 ingest summary を確認します。
 4. PDF が取得可能か、サイズ・ページ数上限内かを確認します。
 5. PDF の表レイアウトが変わっている場合は parser と fixtures を更新します。
+
+### 結合セルが展開されない場合
+
+結合セルの列範囲は、PDFの縦罫線と横罫線から推定します。
+次のいずれかに該当する場合は、誤った展開を避けるため、単一の日付列への割り当てを維持します。
+
+- 内部境界を隣接する行で確認できない
+- 上下左右の外周罫線を確認できない
+- 推定した列範囲の別の日付列に、同じ行領域のテキストがある
+
+展開しなかった場合は、`ambiguous_column_span_not_expanded`を記録します。
+`pdf_operator_*`または`pdf_ruling_*`の警告が発生しても、通常のテキスト抽出は継続します。
+PDF.jsまたはunpdfを更新した場合は、対応バージョンのcharacterization testと、手元のPDFを使った罫線抽出を再確認します。
+
+### ページ端の外側にある共有メニューが復元されない場合
+
+ページ端の外側にある文字は、次の条件をすべて満たす場合だけ共有メニューとして採用します。
+
+- operator上で同じ行の文字列として連続している
+- 料理名と価格の組が完全である
+- `getTextContent()`で抽出された同じ行の文字と書体が一致する
+- 既知の共有行へ一意に割り当てられる
+- ページ端からの距離が、文字サイズと可視文字の間隔から求めた上限内にある
+
+`pdf_text_edge_candidate_detected`は、ページ端の外側で抽出候補を検出したことを表します。
+`pdf_text_edge_shared_item_recovered`は、その候補を共有メニューとして採用したことを表します。
+
+既知の共有行へ割り当てられなかった候補は、`pdf_text_edge_candidate_unassigned`としてdiagnosticに記録します。
+この場合は、メニューの欠落を示す証拠がないためwarningにはしません。
+
+既知の共有行にある候補が不完全、曖昧、書体不一致、または遠すぎる場合は、対応するparser warningを記録します。
+
+採用に成功したdiagnosticには、共有行ID、料理名、価格、座標、ページ端までの距離、判定上限、operator runのindexを記録します。
