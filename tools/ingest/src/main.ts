@@ -450,9 +450,13 @@ function logIngestSummary(summary: IngestSummary): void {
         `status=${result.status}`,
         `dates=${result.menusByDate.size}`,
         `warnings=${result.warnings.length > 0 ? result.warnings.join(",") : "none"}`,
+        `diagnostics=${result.diagnostics?.length ?? 0}`,
         `message=${JSON.stringify(result.statusMessage)}`
       ].join(" ")
     );
+    for (const diagnostic of result.diagnostics ?? []) {
+      console.log(`Location ${result.locationId} diagnostic: ${JSON.stringify(diagnostic)}`);
+    }
   }
 }
 
@@ -472,8 +476,8 @@ function githubStepSummary(summary: IngestSummary): string {
     lines.push(`- Source discovery warnings: \`${summary.discoveryWarnings.join(", ")}\``, "");
   }
 
-  lines.push("| Location | Status | Dates | Warnings | Message |");
-  lines.push("| --- | --- | ---: | --- | --- |");
+  lines.push("| Location | Status | Dates | Warnings | Diagnostics | Message |");
+  lines.push("| --- | --- | ---: | --- | ---: | --- |");
   for (const result of summary.results) {
     lines.push(
       `| ${[
@@ -481,6 +485,7 @@ function githubStepSummary(summary: IngestSummary): string {
         markdownTableCell(result.status),
         String(result.menusByDate.size),
         markdownTableCell(result.warnings.length > 0 ? result.warnings.join(", ") : "none"),
+        String(result.diagnostics?.length ?? 0),
         markdownTableCell(result.statusMessage)
       ].join(" | ")} |`
     );

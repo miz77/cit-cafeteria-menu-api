@@ -4,9 +4,9 @@ import { fetchFailureSlug, formatFetchErrorDetails, INGEST_USER_AGENT, logFetchF
 import { loadPdfOperatorPage, resolvePdfOperatorRuntime, type PdfOperatorPageProxy } from "./pdfOperatorSource";
 import { extractPdfRulings, type PdfPageGeometry } from "./pdfRulings";
 import {
-  collectPdfEdgeOverflowMenuEvidence,
-  type PdfEdgeOverflowDiagnostic,
-  type PdfEdgeOverflowMenuEvidence
+  collectPdfEdgeOverflowEvidence,
+  type PdfEdgeCandidateDiagnostic,
+  type PdfOffPageTextGroup
 } from "./pdfEdgeOverflow";
 import { collectPdfOperatorTextRuns } from "./pdfTextOperators";
 import {
@@ -56,8 +56,8 @@ export interface PdfExtraction {
   items: PdfTextItem[];
   warnings: string[];
   pageGeometry?: PdfPageGeometry[];
-  edgeOverflowMenuEvidence?: PdfEdgeOverflowMenuEvidence[];
-  diagnostics?: Array<PdfTextRecoveryDiagnostic | PdfEdgeOverflowDiagnostic>;
+  offPageTextGroups?: PdfOffPageTextGroup[];
+  diagnostics?: Array<PdfTextRecoveryDiagnostic | PdfEdgeCandidateDiagnostic>;
 }
 
 interface PdfPageProxy extends PdfOperatorPageProxy {
@@ -168,8 +168,8 @@ async function extractWithDocumentProxy(
   const items: PdfTextItem[] = [];
   const warnings: string[] = [...operatorRuntime.warnings];
   const pageGeometry: PdfPageGeometry[] = [];
-  const diagnostics: Array<PdfTextRecoveryDiagnostic | PdfEdgeOverflowDiagnostic> = [];
-  const edgeOverflowMenuEvidence: PdfEdgeOverflowMenuEvidence[] = [];
+  const diagnostics: Array<PdfTextRecoveryDiagnostic | PdfEdgeCandidateDiagnostic> = [];
+  const offPageTextGroups: PdfOffPageTextGroup[] = [];
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     // PDF.js assigns font identifiers while producing text content. Keep this
@@ -205,12 +205,8 @@ async function extractWithDocumentProxy(
         recoveredItems = recovered.items;
         diagnostics.push(...recovered.diagnostics);
         pushUnique(warnings, recovered.warnings);
-        const overflow = collectPdfEdgeOverflowMenuEvidence(
-          runs,
-          operatorPage.value.view,
-          new Set(recovered.claimedRunIndexes)
-        );
-        edgeOverflowMenuEvidence.push(...overflow.evidence);
+        const overflow = collectPdfEdgeOverflowEvidence(runs, operatorPage.value.view, recovered.claims);
+        offPageTextGroups.push(...overflow.groups);
         diagnostics.push(...overflow.diagnostics);
         pushUnique(warnings, overflow.warnings);
       }
@@ -219,7 +215,7 @@ async function extractWithDocumentProxy(
     items.push(...recoveredItems.map(({ fontName: _fontName, ...item }) => item));
   }
 
-  return { pageCount, items, warnings, pageGeometry, edgeOverflowMenuEvidence, diagnostics };
+  return { pageCount, items, warnings, pageGeometry, offPageTextGroups, diagnostics };
 }
 
 async function extractWithPlainText(

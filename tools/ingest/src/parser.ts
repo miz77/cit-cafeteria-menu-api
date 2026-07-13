@@ -13,7 +13,10 @@ import type { FetchedPdf, PdfExtraction, PdfLimits, PdfTextItem } from "./pdf";
 import type { IngestSource } from "./sources";
 import { type ColumnRow, DEFAULT_STRUCTURE_PROFILE, type StructureProfile, structureMenuRows } from "./structure";
 import { inferMergedColumnSpans } from "./tableGeometry";
-import { resolveSharedRowOverflow, type SharedRowBand } from "./sharedRowOverflow";
+import { parseSharedPricePairs } from "./sharedPriceTokens";
+import { resolveSharedRowOverflow, type SharedRowBand, type SharedRowOverflowDiagnostic } from "./sharedRowOverflow";
+
+export type LocationParserDiagnostic = NonNullable<PdfExtraction["diagnostics"]>[number] | SharedRowOverflowDiagnostic;
 
 export interface LocationParseResult {
   locationId: LocationId;
@@ -25,6 +28,7 @@ export interface LocationParseResult {
   menusByDate: Map<string, LocationMenu>;
   fallbackStatuses: Map<string, FallbackStatus>;
   notices: ClosureNotice[];
+  diagnostics?: LocationParserDiagnostic[];
 }
 
 interface DateHeader {
@@ -62,6 +66,7 @@ export interface FallbackStatus {
 }
 
 interface SharedRowProfile {
+  id: string;
   label: string;
   category: MenuCategory;
   categoryLabel: string;
@@ -109,6 +114,7 @@ const SHINNARASHINO_1F_PROFILE: LocationParserProfile = {
   metaOnlyStatus: "not_published",
   sharedRows: [
     {
+      id: "shinnarashino-1f:curry",
       label: "カレー",
       category: "curry",
       categoryLabel: "カレー",
@@ -118,6 +124,7 @@ const SHINNARASHINO_1F_PROFILE: LocationParserProfile = {
       warningSlug: "shared:curry"
     },
     {
+      id: "shinnarashino-1f:side_dish",
       label: "単品",
       category: "side_dish",
       categoryLabel: "単品",
@@ -145,6 +152,7 @@ const SHINNARASHINO_2F_PROFILE: LocationParserProfile = {
   metaOnlyStatus: "not_published",
   sharedRows: [
     {
+      id: "shinnarashino-2f:side_dish",
       label: "小鉢",
       category: "side_dish",
       categoryLabel: "小鉢",
@@ -183,7 +191,12 @@ export function parseLocationPdf(
     );
   }
 
-  if (extraction.items.length > limits.maxTextItemsPerPdf) {
+  const auxiliaryTextRunIndexes = new Set(
+    (extraction.offPageTextGroups ?? []).flatMap((group) =>
+      [...group.runs, ...group.visibleAnchors].map((run) => `${group.page}:${run.sourceRunIndex}`)
+    )
+  );
+  if (extraction.items.length + auxiliaryTextRunIndexes.size > limits.maxTextItemsPerPdf) {
     return failedResult(pdf.source, sourceInfo, "source_changed", "PDF text item count exceeded the parser limit.", [
       ...warnings,
       "source_pdf_text_item_limit_exceeded"
@@ -206,7 +219,7 @@ export function parseLocationPdf(
     }
   );
   const geometryWarnings = columnSpans.warnings;
-  const sharedRows = collectSharedRows(extraction.items, profile, extraction.edgeOverflowMenuEvidence ?? []);
+  const sharedRows = collectSharedRows(extraction.items, profile, extraction.offPageTextGroups ?? []);
   const profileWarnings = [...sharedRows.warnings];
   if (blockCount > 1) {
     warnings.push("multi_block_layout_detected");
@@ -312,7 +325,8 @@ export function parseLocationPdf(
     warnings: uniqueWarnings([...warnings, ...profileWarnings, ...geometryWarnings]),
     menusByDate,
     fallbackStatuses,
-    notices
+    notices,
+    diagnostics: [...(extraction.diagnostics ?? []), ...sharedRows.diagnostics]
   };
 }
 
@@ -600,8 +614,14 @@ function extractColumnRows(
 function collectSharedRows(
   items: readonly PdfTextItem[],
   profile: LocationParserProfile,
-  overflowEvidence: NonNullable<PdfExtraction["edgeOverflowMenuEvidence"]>
-): { menuItems: MenuItem[]; excludeYRanges: YRange[]; warnings: string[]; columnBottomY?: number } {
+  overflowGroups: NonNullable<PdfExtraction["offPageTextGroups"]>
+): {
+  menuItems: MenuItem[];
+  excludeYRanges: YRange[];
+  warnings: string[];
+  diagnostics: SharedRowOverflowDiagnostic[];
+  columnBottomY?: number;
+} {
   const menuItems: MenuItem[] = [];
   const excludeYRanges: YRange[] = [];
   const warnings: string[] = [];
@@ -612,19 +632,19 @@ function collectSharedRows(
   for (const rule of profile.sharedRows ?? []) {
     const label = items.find((item) => normalizeText(item.text) === rule.label && item.x <= rule.labelMaxX);
     if (!label) continue;
-    labels.set(rule.warningSlug, label);
+    labels.set(rule.id, label);
     bands.push({
-      id: rule.warningSlug,
+      id: rule.id,
       page: label.page,
       minY: label.y - rule.maxBelow,
       maxY: label.y + rule.maxAbove
     });
   }
-  const overflow = resolveSharedRowOverflow(overflowEvidence, bands);
+  const overflow = resolveSharedRowOverflow(overflowGroups, bands);
   warnings.push(...overflow.warnings);
 
   for (const rule of profile.sharedRows ?? []) {
-    const label = labels.get(rule.warningSlug);
+    const label = labels.get(rule.id);
     if (!label) {
       warnings.push(profileRowsNotDetectedWarning(rule.warningSlug));
       continue;
@@ -638,15 +658,27 @@ function collectSharedRows(
 
     const rowItems = items.filter((item) => item.page === label.page && item.y >= range.min && item.y <= range.max);
     const parsed = parseSharedPriceItems(rowItems, rule);
-    const recovered = (overflow.evidenceByRowId.get(rule.warningSlug) ?? []).map((item) =>
-      sharedMenuItem(item.name, item.priceYen, rule)
-    );
+    const recovered = overflow.recoveredByRowId.get(rule.id) ?? [];
+    const leftRecovered = recovered
+      .filter((item) => item.side === "left")
+      .sort((left, right) => left.bounds.left - right.bounds.left)
+      .map((item) => sharedMenuItem(item.name, item.priceYen, rule));
+    const rightRecovered = recovered
+      .filter((item) => item.side === "right")
+      .sort((left, right) => left.bounds.left - right.bounds.left)
+      .map((item) => sharedMenuItem(item.name, item.priceYen, rule));
 
     excludeYRanges.push(range);
-    menuItems.push(...parsed, ...recovered);
+    menuItems.push(...leftRecovered, ...parsed, ...rightRecovered);
   }
 
-  return { menuItems: uniqueMenuItems(menuItems), excludeYRanges, warnings: uniqueWarnings(warnings), columnBottomY };
+  return {
+    menuItems: uniqueMenuItems(menuItems),
+    excludeYRanges,
+    warnings: uniqueWarnings(warnings),
+    diagnostics: overflow.diagnostics,
+    columnBottomY
+  };
 }
 
 function collectDailyRows(
@@ -712,21 +744,10 @@ function parseSharedPriceItems(items: readonly PdfTextItem[], rule: SharedRowPro
 
   for (const rowTokens of groupSharedRowTokens(items)) {
     const tokens = rowTokens.filter((token) => token !== rule.label && !/^[~～]$/.test(token));
-    for (let index = 0; index < tokens.length; index += 1) {
-      const token = tokens[index];
-
-      const priceMarkerIndex = token.search(/[¥\\]/);
-      if (priceMarkerIndex < 0) continue;
-
-      const name = cleanSharedItemName(token.slice(0, priceMarkerIndex), rule);
-      let priceText = token.slice(priceMarkerIndex + 1).replace(/\D/g, "");
-      while (index + 1 < tokens.length && isDigitToken(tokens[index + 1])) {
-        index += 1;
-        priceText += tokens[index].replace(/\D/g, "");
-      }
-
-      if (!name || !priceText) continue;
-      menuItems.push(sharedMenuItem(name, Number(priceText), rule));
+    for (const pair of parseSharedPricePairs(tokens)) {
+      const name = cleanSharedItemName(pair.name, rule);
+      if (!name) continue;
+      menuItems.push(sharedMenuItem(name, pair.priceYen, rule));
     }
   }
 
@@ -769,10 +790,6 @@ function pushUniqueWarnings(target: string[], warnings: readonly string[]): void
 
 function uniqueWarnings(warnings: readonly string[]): string[] {
   return Array.from(new Set(warnings));
-}
-
-function isDigitToken(text: string): boolean {
-  return /^\d+$/.test(normalizeText(text));
 }
 
 function parsePriceOnly(text: string): number | null {

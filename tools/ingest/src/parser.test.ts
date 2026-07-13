@@ -135,6 +135,49 @@ describe("simple PDF parser", () => {
     expect(result.menusByDate.size).toBe(0);
   });
 
+  it("counts auxiliary operator evidence toward the PDF text limit", () => {
+    const extraction: PdfExtraction = {
+      pageCount: 1,
+      warnings: [],
+      items: [{ text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 }],
+      offPageTextGroups: [
+        {
+          page: 1,
+          side: "left",
+          baselineY: 100,
+          bounds: { left: -40, bottom: 100, right: -10, top: 110 },
+          edgeGap: 10,
+          runs: [
+            {
+              text: "候補",
+              fontName: "name",
+              bounds: { left: -40, bottom: 100, right: -10, top: 110 },
+              sourceRunIndex: 1
+            }
+          ],
+          visibleAnchors: [
+            {
+              text: "可視",
+              fontName: "name",
+              bounds: { left: 10, bottom: 100, right: 30, top: 110 },
+              sourceRunIndex: 2
+            }
+          ]
+        }
+      ]
+    };
+
+    const result = parseLocationPdf(
+      fetchedPdf(),
+      extraction,
+      { ...DEFAULT_PDF_LIMITS, maxTextItemsPerPdf: 2 },
+      "2026-07-03"
+    );
+
+    expect(result.status).toBe("source_changed");
+    expect(result.warnings).toContain("source_pdf_text_item_limit_exceeded");
+  });
+
   it("supports omitted month after an explicit month", () => {
     const result = parseLocationPdf(
       fetchedPdf(),
@@ -621,20 +664,34 @@ describe("simple PDF parser", () => {
         .get(`2026-07-${day}`)
         ?.menuItems.filter((item) => item.category === "side_dish")
         .map((item) => [item.name, item.priceYen]);
-      expect(sideDishes).toEqual(
-        expect.arrayContaining([
-          ["ライス", 100],
-          ["唐揚", 150],
-          ["コロッケ", 50],
-          ["サラダ", 50],
-          ["味噌汁", 50]
-        ])
-      );
+      expect(sideDishes).toEqual([
+        ["ライス", 100],
+        ["唐揚", 150],
+        ["コロッケ", 50],
+        ["サラダ", 50],
+        ["味噌汁", 50]
+      ]);
     }
 
     const saturday = result.menusByDate.get("2026-07-18");
     expect(saturday?.status).toBe("not_published");
     expect(saturday?.menuItems).toEqual([]);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pdf_text_edge_shared_item_recovered",
+          rowId: "shinnarashino-1f:side_dish",
+          name: "ライス",
+          priceYen: 100
+        }),
+        expect.objectContaining({
+          code: "pdf_text_edge_shared_item_recovered",
+          rowId: "shinnarashino-1f:side_dish",
+          name: "味噌汁",
+          priceYen: 50
+        })
+      ])
+    );
   });
 
   it("does not structure menuItems for non-ok location days", () => {

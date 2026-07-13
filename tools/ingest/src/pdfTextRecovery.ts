@@ -30,7 +30,12 @@ export interface PdfTextRecoveryResult {
   items: PdfPlacementTextItem[];
   diagnostics: PdfTextRecoveryDiagnostic[];
   warnings: string[];
-  claimedRunIndexes: number[];
+  claims: PdfTextRunClaims;
+}
+
+export interface PdfTextRunClaims {
+  matchedVisibleRunIndexes: number[];
+  blockedRunIndexes: number[];
 }
 
 interface Candidate {
@@ -66,6 +71,7 @@ export function recoverPageEdgeTextAffixes(
   const accepted = candidates.filter(
     (candidate) => itemCounts.get(candidate.itemIndex) === 1 && runCounts.get(candidate.runIndex) === 1
   );
+  const acceptedRunIndexes = new Set(accepted.map((candidate) => candidate.runIndex));
   const diagnostics: PdfTextRecoveryDiagnostic[] = [];
   const recovered = items.map((item) => ({ ...item }));
 
@@ -93,9 +99,16 @@ export function recoverPageEdgeTextAffixes(
     items: recovered,
     diagnostics,
     warnings: ambiguous ? ["pdf_text_edge_affix_recovery_ambiguous"] : [],
-    claimedRunIndexes: Array.from(
-      new Set([...reservedRuns, ...candidates.map((candidate) => candidate.runIndex)])
-    ).sort((a, b) => a - b)
+    claims: {
+      matchedVisibleRunIndexes: Array.from(new Set([...reservedRuns, ...acceptedRunIndexes])).sort((a, b) => a - b),
+      blockedRunIndexes: Array.from(
+        new Set(
+          candidates
+            .map((candidate) => candidate.runIndex)
+            .filter((candidateRunIndex) => !acceptedRunIndexes.has(candidateRunIndex))
+        )
+      ).sort((a, b) => a - b)
+    }
   };
 }
 

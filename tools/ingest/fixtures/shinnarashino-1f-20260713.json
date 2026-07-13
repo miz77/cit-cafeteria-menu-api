@@ -1090,34 +1090,126 @@
       "height": 28.824
     }
   ],
-  "edgeOverflowMenuEvidence": [
+  "offPageTextGroups": [
     {
       "page": 1,
-      "name": "ライス",
-      "priceYen": 100,
       "side": "left",
+      "baselineY": 328.82000732421875,
       "bounds": {
         "left": -191.4199981689453,
         "bottom": 328.82000732421875,
         "right": -24.35999304929686,
         "top": 357.62000732421876
       },
-      "baselineY": 328.82000732421875,
-      "sourceRunIndexes": [86, 87]
+      "edgeGap": 24.35999304929686,
+      "runs": [
+        {
+          "text": "ライス￥",
+          "fontName": "g_d0_f7",
+          "bounds": {
+            "left": -191.4199981689453,
+            "bottom": 328.82000732421875,
+            "right": -86.30000580894531,
+            "top": 357.62000732421876
+          },
+          "sourceRunIndex": 86
+        },
+        {
+          "text": "100",
+          "fontName": "g_d0_f8",
+          "bounds": {
+            "left": -86.27999877929688,
+            "bottom": 328.82000732421875,
+            "right": -24.35999304929686,
+            "top": 357.62000732421876
+          },
+          "sourceRunIndex": 87
+        }
+      ],
+      "visibleAnchors": [
+        {
+          "text": "唐揚￥１",
+          "fontName": "g_d0_f7",
+          "bounds": {
+            "left": 14.064000129699707,
+            "bottom": 328.82000732421875,
+            "right": 118.60800776969971,
+            "top": 357.62000732421876
+          },
+          "sourceRunIndex": 88
+        },
+        {
+          "text": "5",
+          "fontName": "g_d0_f8",
+          "bounds": {
+            "left": 118.62999725341797,
+            "bottom": 328.82000732421875,
+            "right": 140.51799916341798,
+            "top": 357.62000732421876
+          },
+          "sourceRunIndex": 89
+        }
+      ]
     },
     {
       "page": 1,
-      "name": "味噌汁",
-      "priceYen": 50,
       "side": "right",
+      "baselineY": 328.82000732421875,
       "bounds": {
         "left": 628.6099853515625,
         "bottom": 328.82000732421875,
         "right": 787.6060132698437,
         "top": 357.62000732421876
       },
-      "baselineY": 328.82000732421875,
-      "sourceRunIndexes": [95, 96]
+      "edgeGap": 33.409985351562455,
+      "runs": [
+        {
+          "text": "味噌汁￥",
+          "fontName": "g_d0_f7",
+          "bounds": {
+            "left": 628.6099853515625,
+            "bottom": 328.82000732421875,
+            "right": 743.8099777115625,
+            "top": 357.62000732421876
+          },
+          "sourceRunIndex": 95
+        },
+        {
+          "text": "50",
+          "fontName": "g_d0_f8",
+          "bounds": {
+            "left": 743.8300170898438,
+            "bottom": 328.82000732421875,
+            "right": 787.6060132698437,
+            "top": 357.62000732421876
+          },
+          "sourceRunIndex": 96
+        }
+      ],
+      "visibleAnchors": [
+        {
+          "text": "唐揚￥１",
+          "fontName": "g_d0_f7",
+          "bounds": {
+            "left": 14.064000129699707,
+            "bottom": 328.82000732421875,
+            "right": 118.60800776969971,
+            "top": 357.62000732421876
+          },
+          "sourceRunIndex": 88
+        },
+        {
+          "text": "5",
+          "fontName": "g_d0_f8",
+          "bounds": {
+            "left": 118.62999725341797,
+            "bottom": 328.82000732421875,
+            "right": 140.51799916341798,
+            "top": 357.62000732421876
+          },
+          "sourceRunIndex": 89
+        }
+      ]
     }
   ],
   "warnings": []

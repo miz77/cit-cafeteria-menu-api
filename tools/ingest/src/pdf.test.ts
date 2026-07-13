@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { INGEST_USER_AGENT } from "./fetchDiagnostics";
-import { __test__, DEFAULT_PDF_LIMITS, fetchPdf, PdfFetchError } from "./pdf";
+import { __test__, DEFAULT_PDF_LIMITS, fetchPdf, PdfFetchError, type PdfExtraction } from "./pdf";
 import type { PdfOperatorPage, PdfOperatorRuntime } from "./pdfOperatorSource";
 import { collectPdfOperatorTextRuns } from "./pdfTextOperators";
 import { recoverPageEdgeTextAffixes } from "./pdfTextRecovery";
+import { parseLocationPdf } from "./parser";
 import type { IngestSource } from "./sources";
 
 const SOURCE: IngestSource = {
@@ -131,7 +132,7 @@ describe("clipped PDF text recovery", () => {
 
     expect(result.items[0].text).toBe("身フライ");
     expect(result.warnings).toEqual(["pdf_text_edge_affix_recovery_ambiguous"]);
-    expect(result.claimedRunIndexes).toEqual([0, 1]);
+    expect(result.claims).toEqual({ matchedVisibleRunIndexes: [], blockedRunIndexes: [0, 1] });
   });
 
   it("does not rewrite internal differences or non-clipped affixes", () => {
@@ -153,7 +154,7 @@ describe("clipped PDF text recovery", () => {
     const result = recoverPageEdgeTextAffixes([exact, clipped], [operatorRun("白身フライ", -10)], PAGE_VIEW);
 
     expect(result.items.map((item) => item.text)).toEqual(["白身フライ", "身フライ"]);
-    expect(result.claimedRunIndexes).toEqual([0]);
+    expect(result.claims).toEqual({ matchedVisibleRunIndexes: [0], blockedRunIndexes: [] });
   });
 
   it("keeps text and empty geometry when the optional operator list fails", async () => {
@@ -186,6 +187,65 @@ describe("clipped PDF text recovery", () => {
     expect(result.pageGeometry).toEqual([]);
     expect(result.diagnostics).toEqual([]);
     expect(result.warnings).toContain("pdf_operator_list_unavailable");
+  });
+
+  it("carries operator-only edge cells through extraction and shared-row parsing", async () => {
+    const operatorList = operatorRuns([
+      { text: "ライス￥", x: -70, fontName: "name" },
+      { text: "100", x: -30, fontName: "price" },
+      { text: "唐揚￥", x: 10, fontName: "name" },
+      { text: "150", x: 40, fontName: "price" },
+      { text: "味噌汁￥", x: 110, fontName: "name" },
+      { text: "50", x: 150, fontName: "price" }
+    ]);
+    const extraction = await __test__.extractWithDocumentProxy(
+      async () => ({
+        numPages: 1,
+        getPage: async () => ({
+          view: [0, 0, 100, 200],
+          getTextContent: async () => ({
+            items: [
+              rawTextItem("7月13日（月）", 45, 180, "date"),
+              rawTextItem("営業メニュー", 45, 140, "body"),
+              rawTextItem("単品", 5, 100, "label"),
+              rawTextItem("唐揚￥", 10, 100, "name"),
+              rawTextItem("150", 40, 100, "price")
+            ]
+          }),
+          getOperatorList: async () => operatorList
+        })
+      }),
+      new Uint8Array([1]),
+      { value: RUNTIME, warnings: [] }
+    );
+
+    expect(extraction.offPageTextGroups?.map((group) => group.runs.map((run) => run.text))).toEqual([
+      ["ライス￥", "100"],
+      ["味噌汁￥", "50"]
+    ]);
+
+    const result = parseLocationPdf(
+      {
+        source: { ...SOURCE, locationId: "shinnarashino-1f", pdfUrl: SOURCE.pdfUrl.replace("t.pdf", "s1.pdf") },
+        bytes: new Uint8Array([1]),
+        fetchedAt: "2026-07-13T00:00:00.000Z",
+        sha256: "a".repeat(64),
+        warnings: []
+      },
+      extraction as PdfExtraction,
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+    expect(
+      result.menusByDate
+        .get("2026-07-13")
+        ?.menuItems.filter((item) => item.category === "side_dish")
+        .map((item) => [item.name, item.priceYen])
+    ).toEqual([
+      ["ライス", 100],
+      ["唐揚", 150],
+      ["味噌汁", 50]
+    ]);
   });
 });
 
@@ -243,6 +303,35 @@ function operatorRun(text: string, x: number) {
 
 function operatorGlyph(text: string) {
   return { unicode: text, width: 1000 };
+}
+
+function operatorRuns(entries: Array<{ text: string; x: number; fontName: string }>): {
+  fnArray: number[];
+  argsArray: unknown[];
+} {
+  const fnArray: number[] = [];
+  const argsArray: unknown[] = [];
+  for (const entry of entries) {
+    fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText);
+    argsArray.push(
+      [],
+      [entry.fontName, 10],
+      [1, 0, 0, 1, entry.x, 100],
+      [Array.from(entry.text).map(operatorGlyph)],
+      []
+    );
+  }
+  return { fnArray, argsArray };
+}
+
+function rawTextItem(text: string, x: number, y: number, fontName: string) {
+  return {
+    str: text,
+    transform: [1, 0, 0, 1, x, y],
+    width: Array.from(text).length * 10,
+    height: 10,
+    fontName
+  };
 }
 function errorWithCause(code: string, name: string): Error {
   const error = new TypeError("fetch failed");

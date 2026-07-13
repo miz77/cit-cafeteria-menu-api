@@ -1,29 +1,36 @@
 import type { PdfBounds } from "./pdfGraphicsState";
 import type { PdfOperatorTextRun } from "./pdfTextOperators";
+import type { PdfTextRunClaims } from "./pdfTextRecovery";
 
-export interface PdfEdgeOverflowMenuEvidence {
-  page: number;
-  name: string;
-  priceYen: number;
-  side: "left" | "right";
+export interface PdfEdgeTextRunEvidence {
+  text: string;
+  fontName: string;
   bounds: PdfBounds;
-  baselineY: number;
-  sourceRunIndexes: number[];
+  sourceRunIndex: number;
 }
 
-export interface PdfEdgeOverflowDiagnostic {
-  code: "pdf_text_edge_overflow_recovered";
+export interface PdfOffPageTextGroup {
   page: number;
-  name: string;
-  priceYen: number;
+  side: "left" | "right";
+  baselineY: number;
+  bounds: PdfBounds;
+  edgeGap: number;
+  runs: PdfEdgeTextRunEvidence[];
+  visibleAnchors: PdfEdgeTextRunEvidence[];
+}
+
+export interface PdfEdgeCandidateDiagnostic {
+  code: "pdf_text_edge_candidate_detected";
+  page: number;
   side: "left" | "right";
   bounds: PdfBounds;
+  edgeGap: number;
   sourceRunIndexes: number[];
 }
 
 export interface PdfEdgeOverflowResult {
-  evidence: PdfEdgeOverflowMenuEvidence[];
-  diagnostics: PdfEdgeOverflowDiagnostic[];
+  groups: PdfOffPageTextGroup[];
+  diagnostics: PdfEdgeCandidateDiagnostic[];
   warnings: string[];
 }
 
@@ -32,175 +39,121 @@ interface IndexedRun {
   run: PdfOperatorTextRun;
 }
 
-interface ParsedStart {
-  name: string;
-  leadingDigits: string;
-}
-
-interface TypographyAnchor {
-  nameFonts: Set<string>;
-  digitFonts: Set<string>;
-}
-
-const MAX_PRICE_DIGITS = 5;
+const MAX_EDGE_EVIDENCE_RUNS_PER_PAGE = 30_000;
 
 /**
- * Collects complete name/price cells that PDF.js omitted solely because their
- * operator text is wholly outside the horizontal page view. The result remains
- * evidence until the parser assigns it to one unambiguous shared row.
+ * Preserves only the nearest connected off-page operator group for each
+ * page/baseline/side. Menu semantics remain the parser's responsibility.
  */
-export function collectPdfEdgeOverflowMenuEvidence(
+export function collectPdfEdgeOverflowEvidence(
   runs: readonly PdfOperatorTextRun[],
   pageView: PdfBounds,
-  excludedRunIndexes: ReadonlySet<number> = new Set()
+  claims: PdfTextRunClaims
 ): PdfEdgeOverflowResult {
+  const matchedVisible = new Set(claims.matchedVisibleRunIndexes);
+  const unavailable = new Set([...claims.matchedVisibleRunIndexes, ...claims.blockedRunIndexes]);
   const indexed = runs.map((run, index) => ({ run, index }));
   const outside = indexed.filter(
-    ({ index, run }) => !excludedRunIndexes.has(index) && horizontalSide(run.bounds, pageView) !== null
+    ({ index, run }) => !unavailable.has(index) && horizontalSide(run.bounds, pageView) !== null
   );
-  const visible = indexed.filter(({ run }) => intersectsView(run.bounds, pageView));
-  const anchors = indexVisibleTypography(visible);
-  const evidence: PdfEdgeOverflowMenuEvidence[] = [];
-  let incomplete = false;
-
-  for (const line of groupOutsideLines(outside, pageView)) {
-    for (let position = 0; position < line.length; position += 1) {
-      const entry = line[position];
-      const start = parseNamePriceStart(entry.run.text);
-      if (!start) continue;
-      const side = horizontalSide(entry.run.bounds, pageView);
-      if (!side) continue;
-
-      const sourceRuns = [entry];
-      let digits = start.leadingDigits;
-      let right = entry.run.bounds.right;
-      for (let next = position + 1; next < line.length; next += 1) {
-        const candidate = line[next];
-        if (!isDigitText(candidate.run.text) || !isAdjacent(right, candidate.run.bounds.left, entry.run.bounds)) break;
-        sourceRuns.push(candidate);
-        digits += normalizePdfText(candidate.run.text).replace(/\D/g, "");
-        right = candidate.run.bounds.right;
-        if (digits.length >= MAX_PRICE_DIGITS) break;
-      }
-
-      if (!/^\d{2,5}$/.test(digits)) {
-        incomplete = true;
-        continue;
-      }
-      if (
-        !hasVisibleTypographyAnchor(
-          entry.run,
-          sourceRuns.slice(1).map(({ run }) => run),
-          anchors
-        )
-      )
-        continue;
-
-      const bounds = unionBounds(sourceRuns.map(({ run }) => run.bounds));
-      evidence.push({
-        page: entry.run.page,
-        name: start.name,
-        priceYen: Number(digits),
-        side,
-        bounds,
-        baselineY: entry.run.baselineY,
-        sourceRunIndexes: sourceRuns.map(({ index }) => index)
-      });
-    }
+  if (outside.length > MAX_EDGE_EVIDENCE_RUNS_PER_PAGE) {
+    return { groups: [], diagnostics: [], warnings: ["pdf_edge_text_evidence_limit_exceeded"] };
   }
 
-  const { unique, duplicate } = uniqueEvidence(evidence);
-  const ambiguous = duplicate;
+  const visibleAnchors = indexed.filter(
+    ({ index, run }) => matchedVisible.has(index) && intersectsView(run.bounds, pageView)
+  );
+  const groups = clusterOutsideLines(outside, pageView).map((line) =>
+    nearestConnectedGroup(line, visibleAnchors, pageView)
+  );
+
   return {
-    evidence: ambiguous ? [] : unique,
-    diagnostics: ambiguous
-      ? []
-      : unique.map((item) => ({
-          code: "pdf_text_edge_overflow_recovered",
-          page: item.page,
-          name: item.name,
-          priceYen: item.priceYen,
-          side: item.side,
-          bounds: item.bounds,
-          sourceRunIndexes: item.sourceRunIndexes
-        })),
-    warnings: [
-      ...(ambiguous ? ["pdf_text_edge_overflow_ambiguous"] : []),
-      ...(incomplete ? ["pdf_text_edge_overflow_incomplete_pair"] : [])
-    ]
+    groups,
+    diagnostics: groups.map((group) => ({
+      code: "pdf_text_edge_candidate_detected",
+      page: group.page,
+      side: group.side,
+      bounds: group.bounds,
+      edgeGap: group.edgeGap,
+      sourceRunIndexes: group.runs.map((run) => run.sourceRunIndex)
+    })),
+    warnings: []
   };
 }
 
-function parseNamePriceStart(text: string): ParsedStart | null {
-  const match = normalizePdfText(text).match(/^(.+?)[¥\\]\s*(\d*)$/);
-  if (!match) return null;
-  const name = match[1].trim();
-  return name ? { name, leadingDigits: match[2] } : null;
-}
-
-function hasVisibleTypographyAnchor(
-  nameRun: PdfOperatorTextRun,
-  priceRuns: readonly PdfOperatorTextRun[],
-  anchors: ReadonlyMap<string, TypographyAnchor>
-): boolean {
-  const nearby = nearbyTypographyAnchors(nameRun, anchors);
-  if (!nearby.some((anchor) => anchor.nameFonts.has(nameRun.fontName))) return false;
-  if (priceRuns.length === 0) return /\d/.test(normalizePdfText(nameRun.text));
-  return priceRuns.every((priceRun) => nearby.some((anchor) => anchor.digitFonts.has(priceRun.fontName)));
-}
-
-function indexVisibleTypography(visible: readonly IndexedRun[]): Map<string, TypographyAnchor> {
-  const anchors = new Map<string, TypographyAnchor>();
-  for (const { run } of visible) {
-    const key = typographyKey(run.page, Math.round(run.baselineY));
-    const anchor = anchors.get(key) ?? { nameFonts: new Set<string>(), digitFonts: new Set<string>() };
-    if (/^.+?[¥\\]/.test(normalizePdfText(run.text))) anchor.nameFonts.add(run.fontName);
-    if (isDigitText(run.text)) anchor.digitFonts.add(run.fontName);
-    anchors.set(key, anchor);
+function clusterOutsideLines(outside: readonly IndexedRun[], view: PdfBounds): IndexedRun[][] {
+  const sorted = [...outside].sort((left, right) => {
+    const page = left.run.page - right.run.page;
+    if (page !== 0) return page;
+    const leftSide = horizontalSide(left.run.bounds, view) ?? "left";
+    const rightSide = horizontalSide(right.run.bounds, view) ?? "left";
+    const side = leftSide.localeCompare(rightSide);
+    if (side !== 0) return side;
+    return left.run.baselineY - right.run.baselineY || left.run.bounds.left - right.run.bounds.left;
+  });
+  const lines: IndexedRun[][] = [];
+  for (const entry of sorted) {
+    const previous = lines.at(-1);
+    if (previous && belongsToLine(previous, entry, view)) previous.push(entry);
+    else lines.push([entry]);
   }
-  return anchors;
+  return lines;
 }
 
-function nearbyTypographyAnchors(
-  run: PdfOperatorTextRun,
-  anchors: ReadonlyMap<string, TypographyAnchor>
-): TypographyAnchor[] {
-  const baseline = Math.round(run.baselineY);
-  return [-1, 0, 1]
-    .map((offset) => anchors.get(typographyKey(run.page, baseline + offset)))
-    .filter((anchor): anchor is TypographyAnchor => anchor !== undefined);
+function belongsToLine(line: readonly IndexedRun[], entry: IndexedRun, view: PdfBounds): boolean {
+  const first = line[0].run;
+  if (first.page !== entry.run.page) return false;
+  if (horizontalSide(first.bounds, view) !== horizontalSide(entry.run.bounds, view)) return false;
+  const tolerance = Math.max(0.75, Math.min(height(first.bounds), height(entry.run.bounds)) * 0.08);
+  return Math.abs(first.baselineY - entry.run.baselineY) <= tolerance;
 }
 
-function typographyKey(page: number, baseline: number): string {
-  return `${page}:${baseline}`;
-}
-
-function groupOutsideLines(outside: readonly IndexedRun[], view: PdfBounds): IndexedRun[][] {
-  const groups = new Map<string, IndexedRun[]>();
-  for (const entry of outside) {
-    const side = horizontalSide(entry.run.bounds, view);
-    const key = `${entry.run.page}:${side}:${Math.round(entry.run.baselineY)}`;
-    const line = groups.get(key) ?? [];
-    line.push(entry);
-    groups.set(key, line);
+function nearestConnectedGroup(
+  line: readonly IndexedRun[],
+  visibleAnchors: readonly IndexedRun[],
+  view: PdfBounds
+): PdfOffPageTextGroup {
+  const sorted = [...line].sort((left, right) => left.run.bounds.left - right.run.bounds.left);
+  const side = horizontalSide(sorted[0].run.bounds, view) ?? "left";
+  let start = side === "left" ? sorted.length - 1 : 0;
+  let end = start;
+  if (side === "left") {
+    while (start > 0 && connected(sorted[start - 1].run.bounds, sorted[start].run.bounds)) start -= 1;
+  } else {
+    while (end + 1 < sorted.length && connected(sorted[end].run.bounds, sorted[end + 1].run.bounds)) end += 1;
   }
-  return Array.from(groups.values()).map((line) =>
-    line.sort((left, right) => left.run.bounds.left - right.run.bounds.left)
-  );
+
+  const selected = sorted.slice(start, end + 1);
+  const bounds = unionBounds(selected.map(({ run }) => run.bounds));
+  const baselineY = selected.reduce((sum, { run }) => sum + run.baselineY, 0) / selected.length;
+  const anchors = visibleAnchors
+    .filter(({ run }) => sameLine(run, selected[0].run))
+    .sort((left, right) => left.run.bounds.left - right.run.bounds.left);
+  return {
+    page: selected[0].run.page,
+    side,
+    baselineY,
+    bounds,
+    edgeGap: side === "left" ? Math.max(0, view.left - bounds.right) : Math.max(0, bounds.left - view.right),
+    runs: selected.map(toEvidence),
+    visibleAnchors: anchors.map(toEvidence)
+  };
 }
 
-function isAdjacent(previousRight: number, nextLeft: number, reference: PdfBounds): boolean {
-  const height = Math.max(1, reference.top - reference.bottom);
-  const gap = nextLeft - previousRight;
-  return gap >= -1 && gap <= Math.max(2, height * 0.25);
+function connected(left: PdfBounds, right: PdfBounds): boolean {
+  const gap = right.left - left.right;
+  const referenceHeight = Math.max(1, Math.min(height(left), height(right)));
+  return gap >= -1 && gap <= Math.max(2, referenceHeight * 0.25);
 }
 
-function isDigitText(text: string): boolean {
-  return /^\d+$/.test(normalizePdfText(text));
+function sameLine(left: PdfOperatorTextRun, right: PdfOperatorTextRun): boolean {
+  if (left.page !== right.page) return false;
+  const tolerance = Math.max(0.75, Math.min(height(left.bounds), height(right.bounds)) * 0.08);
+  return Math.abs(left.baselineY - right.baselineY) <= tolerance;
 }
 
-function normalizePdfText(text: string): string {
-  return text.normalize("NFKC").replace(/￥/g, "¥").trim();
+function toEvidence({ index, run }: IndexedRun): PdfEdgeTextRunEvidence {
+  return { text: run.text, fontName: run.fontName, bounds: run.bounds, sourceRunIndex: index };
 }
 
 function horizontalSide(bounds: PdfBounds, view: PdfBounds): "left" | "right" | null {
@@ -215,23 +168,8 @@ function intersectsView(bounds: PdfBounds, view: PdfBounds): boolean {
   return bounds.right > view.left && bounds.left < view.right && bounds.top > view.bottom && bounds.bottom < view.top;
 }
 
-function uniqueEvidence(evidence: readonly PdfEdgeOverflowMenuEvidence[]): {
-  unique: PdfEdgeOverflowMenuEvidence[];
-  duplicate: boolean;
-} {
-  const seen = new Set<string>();
-  const unique: PdfEdgeOverflowMenuEvidence[] = [];
-  let duplicate = false;
-  for (const item of evidence) {
-    const key = `${item.page}:${Math.round(item.baselineY)}:${item.side}:${item.name}:${item.priceYen}`;
-    if (seen.has(key)) {
-      duplicate = true;
-      continue;
-    }
-    seen.add(key);
-    unique.push(item);
-  }
-  return { unique, duplicate };
+function height(bounds: PdfBounds): number {
+  return bounds.top - bounds.bottom;
 }
 
 function unionBounds(bounds: readonly PdfBounds[]): PdfBounds {

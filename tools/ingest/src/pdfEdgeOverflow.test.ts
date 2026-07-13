@@ -1,66 +1,64 @@
 import { describe, expect, it } from "vitest";
-import { collectPdfEdgeOverflowMenuEvidence } from "./pdfEdgeOverflow";
+import { collectPdfEdgeOverflowEvidence } from "./pdfEdgeOverflow";
 import type { PdfOperatorTextRun } from "./pdfTextOperators";
 
 const PAGE_VIEW = { left: 0, bottom: 0, right: 595.2, top: 841.68 };
+const VISIBLE_CLAIMS = { matchedVisibleRunIndexes: [2, 3, 4], blockedRunIndexes: [] };
 
-describe("PDF edge-overflow menu evidence", () => {
-  it("collects complete off-page name and price pairs using visible row typography", () => {
-    const runs = currentSideDishRuns();
-    const result = collectPdfEdgeOverflowMenuEvidence(runs, PAGE_VIEW);
+describe("PDF edge-overflow evidence", () => {
+  it("keeps the nearest connected groups without interpreting menu text", () => {
+    const result = collectPdfEdgeOverflowEvidence(currentSideDishRuns(), PAGE_VIEW, VISIBLE_CLAIMS);
 
-    expect(result.evidence).toEqual([
-      expect.objectContaining({ name: "ライス", priceYen: 100, side: "left", sourceRunIndexes: [0, 1] }),
-      expect.objectContaining({ name: "味噌汁", priceYen: 50, side: "right", sourceRunIndexes: [5, 6] })
+    expect(result.groups).toEqual([
+      expect.objectContaining({
+        side: "left",
+        edgeGap: expect.closeTo(24.36),
+        runs: [expect.objectContaining({ text: "ライス￥" }), expect.objectContaining({ text: "100" })],
+        visibleAnchors: expect.arrayContaining([expect.objectContaining({ text: "唐揚￥１" })])
+      }),
+      expect.objectContaining({
+        side: "right",
+        edgeGap: expect.closeTo(33.41),
+        runs: [expect.objectContaining({ text: "味噌汁￥" }), expect.objectContaining({ text: "50" })]
+      })
     ]);
+    expect(result.diagnostics.every((item) => item.code === "pdf_text_edge_candidate_detected")).toBe(true);
     expect(result.warnings).toEqual([]);
   });
 
-  it("normalizes full-width price markers and digits split across runs", () => {
-    const runs = currentSideDishRuns();
-    runs[0] = run("ライス￥", -190, -85, "name");
-    runs[1] = run("１００", -85, -25, "price");
-
-    expect(collectPdfEdgeOverflowMenuEvidence(runs, PAGE_VIEW).evidence[0]).toMatchObject({
-      name: "ライス",
-      priceYen: 100
+  it("uses only getTextContent-matched runs as visible anchors", () => {
+    const result = collectPdfEdgeOverflowEvidence(currentSideDishRuns(), PAGE_VIEW, {
+      matchedVisibleRunIndexes: [],
+      blockedRunIndexes: []
     });
+
+    expect(result.groups.every((group) => group.visibleAnchors.length === 0)).toBe(true);
   });
 
-  it("does not reuse runs claimed by exact or affix text recovery", () => {
-    const result = collectPdfEdgeOverflowMenuEvidence(currentSideDishRuns(), PAGE_VIEW, new Set([0]));
+  it("does not reuse blocked or visible-matched off-page runs", () => {
+    const result = collectPdfEdgeOverflowEvidence(currentSideDishRuns(), PAGE_VIEW, {
+      matchedVisibleRunIndexes: [0, 2, 3, 4],
+      blockedRunIndexes: [5]
+    });
 
-    expect(result.evidence.map((item) => item.name)).toEqual(["味噌汁"]);
+    expect(result.groups.map((group) => group.runs.map((run) => run.text))).toEqual([["100"], ["50"]]);
   });
 
-  it("rejects incomplete pairs, internal hidden text, and typography without a visible anchor", () => {
-    const incomplete = [
-      run("ライス￥", -190, -85, "name"),
-      run("唐揚￥１", 15, 120, "name"),
-      run("５０", 120, 160, "price")
-    ];
-    const internal = [
-      run("ライス￥", 200, 300, "name"),
-      run("１００", 300, 360, "price"),
-      run("唐揚￥１", 15, 120, "name"),
-      run("５０", 120, 160, "price")
-    ];
-    const noAnchor = [run("ライス￥", -190, -85, "other"), run("１００", -85, -25, "price")];
-
-    expect(collectPdfEdgeOverflowMenuEvidence(incomplete, PAGE_VIEW).evidence).toEqual([]);
-    expect(collectPdfEdgeOverflowMenuEvidence(incomplete, PAGE_VIEW).warnings).toContain(
-      "pdf_text_edge_overflow_incomplete_pair"
-    );
-    expect(collectPdfEdgeOverflowMenuEvidence(internal, PAGE_VIEW).evidence).toEqual([]);
-    expect(collectPdfEdgeOverflowMenuEvidence(noAnchor, PAGE_VIEW).evidence).toEqual([]);
-  });
-
-  it("does not require equal spacing between cells", () => {
+  it("keeps nearly identical baselines together across a rounding boundary", () => {
     const runs = currentSideDishRuns();
-    runs[0] = run("ライス￥", -400, -285, "name");
-    runs[1] = run("１００", -285, -225, "price");
+    runs[0] = run("ライス￥", -191.42, -86.3, "name", 328.49);
+    runs[1] = run("100", -86.28, -24.36, "price", 328.51);
 
-    expect(collectPdfEdgeOverflowMenuEvidence(runs, PAGE_VIEW).evidence[0]).toMatchObject({ name: "ライス" });
+    const result = collectPdfEdgeOverflowEvidence(runs, PAGE_VIEW, VISIBLE_CLAIMS);
+    expect(result.groups[0].runs.map((item) => item.text)).toEqual(["ライス￥", "100"]);
+  });
+
+  it("does not skip a nearer unrelated run to recover a farther complete pair", () => {
+    const runs = [...currentSideDishRuns(), run("旧", -10, 0, "name")];
+    const result = collectPdfEdgeOverflowEvidence(runs, PAGE_VIEW, VISIBLE_CLAIMS);
+    const left = result.groups.find((group) => group.side === "left");
+
+    expect(left?.runs.map((item) => item.text)).toEqual(["旧"]);
   });
 });
 
@@ -76,13 +74,13 @@ function currentSideDishRuns(): PdfOperatorTextRun[] {
   ];
 }
 
-function run(text: string, left: number, right: number, fontName: string): PdfOperatorTextRun {
+function run(text: string, left: number, right: number, fontName: string, baselineY = 328.82): PdfOperatorTextRun {
   return {
     page: 1,
     text,
     fontName,
-    baselineY: 328.82,
-    bounds: { left, bottom: 328.82, right, top: 357.62 },
-    glyphs: [{ text, bounds: { left, bottom: 328.82, right, top: 357.62 } }]
+    baselineY,
+    bounds: { left, bottom: baselineY, right, top: baselineY + 28.8 },
+    glyphs: [{ text, bounds: { left, bottom: baselineY, right, top: baselineY + 28.8 } }]
   };
 }

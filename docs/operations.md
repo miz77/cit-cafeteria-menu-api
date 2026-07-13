@@ -152,3 +152,5 @@ pnpm --filter @cit-cafeteria/api-worker check:bundle
 5. PDF の表レイアウトが変わっている場合は parser と fixtures を更新します。
 
 結合セルはPDFの縦横罫線から列範囲を復元します。内部境界が隣接行で確認できない、外周罫線が閉じない、同じrow band内の別列に競合テキストがある、など証拠が不足する場合は展開せず `ambiguous_column_span_not_expanded` を記録します。`pdf_operator_*` または `pdf_ruling_*` warningがある場合も基本テキスト抽出は継続されます。dependency更新時は、対応するPDF.js/unpdf versionのcharacterization testと手元PDFの罫線抽出を再確認してください。
+
+ページ端の外側にある文字は、operator上でページ端へ連続し、`getTextContent()`と対応した同一行の文字がanchorになり、既知の共有行へ一意に割り当てられる場合だけ復元します。run logの`pdf_text_edge_candidate_detected`は抽出候補、`pdf_text_edge_shared_item_recovered`は共有行への採用を表します。`candidate_unassigned`は調査用diagnosticに留まり、既知の共有行で不完全・曖昧・遠すぎる候補だけがparser warningになります。成功diagnosticにはrow id、座標、ページ端までの距離、判定上限、operator run indexが記録されます。
