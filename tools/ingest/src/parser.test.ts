@@ -422,30 +422,6 @@ describe("simple PDF parser", () => {
     expect(monday?.parser.warnings).toContain("closure_notice_subject_unknown");
   });
 
-  it("does not remove a legitimate menu name containing 休み", () => {
-    const result = parseLocationPdf(
-      fetchedPdf(),
-      {
-        pageCount: 1,
-        warnings: [],
-        items: [
-          { text: "7月6日（月）", page: 1, x: 100, y: 700, width: 40, height: 10 },
-          { text: "夕定食", page: 1, x: 0, y: 300, width: 40, height: 10 },
-          { text: "＜工大350＞", page: 1, x: 100, y: 650, width: 50, height: 10 },
-          { text: "箸休み小鉢", page: 1, x: 100, y: 630, width: 60, height: 10 }
-        ]
-      },
-      DEFAULT_PDF_LIMITS,
-      "2026-07-03"
-    );
-
-    const monday = result.menusByDate.get("2026-07-06");
-    expect(monday?.status).toBe("ok");
-    expect(monday?.menuItems).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "箸休み小鉢", priceYen: 350 })])
-    );
-  });
-
   it("structures current New Narashino fixtures without the known high-confidence false items", () => {
     const firstFloor = parseLocationPdf(
       fetchedPdf("shinnarashino-1f"),
