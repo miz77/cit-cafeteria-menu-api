@@ -659,7 +659,9 @@ function collectSharedRows(
       columnBottomY = columnBottomY === undefined ? bottomY : Math.min(columnBottomY, bottomY);
     }
 
-    const rowItems = items.filter((item) => item.page === label.page && item.y >= range.min && item.y <= range.max);
+    const rowItems = items.filter(
+      (item) => item !== label && item.page === label.page && item.y >= range.min && item.y <= range.max
+    );
     const parsed = parseSharedPriceItems(rowItems, rule);
     const recovered = overflow.recoveredByRowId.get(rule.id) ?? [];
     const leftRecovered = recovered
@@ -746,7 +748,7 @@ function parseSharedPriceItems(items: readonly PdfTextItem[], rule: SharedRowPro
   const menuItems: MenuItem[] = [];
 
   for (const rowTokens of groupSharedRowTokens(items)) {
-    const tokens = rowTokens.filter((token) => token !== rule.label && !/^[~～]$/.test(token));
+    const tokens = rowTokens.filter((token) => !/^[~～]$/.test(token));
     for (const pair of parseSharedPricePairs(tokens)) {
       const name = cleanSharedItemName(pair.name, rule);
       if (!name) continue;
@@ -776,7 +778,6 @@ function groupSharedRowTokens(items: readonly PdfTextItem[]): string[][] {
 
 function cleanSharedItemName(name: string, rule: SharedRowProfile): string {
   const normalized = normalizeText(name).replace(/\s+/g, "");
-  if (normalized === rule.label) return "";
   if (normalized && normalized.length < rule.label.length && rule.label.endsWith(normalized)) return rule.label;
   return normalized;
 }
