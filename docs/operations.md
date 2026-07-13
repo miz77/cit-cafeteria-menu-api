@@ -55,6 +55,31 @@ GitHub CLI を使う場合は、次を実行します。
 gh variable set ENABLE_SCHEDULED_INGEST --body true
 ```
 
+### 定期実行を維持する heartbeat
+
+GitHub は、公開リポジトリに60日間活動がない場合、`schedule` で起動する workflow を自動的に無効化します。
+`Update cafeteria menu data` は週1回コミットを作成し、リポジトリの活動を継続させます。
+
+仕様：[GitHub Docs「Disabling and enabling a workflow」](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows)
+
+`heartbeat` job は、`schedule` で起動し、`ENABLE_SCHEDULED_INGEST=true` が設定された場合だけ実行します。
+scheduled run ごとに `.github/scheduled-ingest-heartbeat.json` の `week` を確認します。
+現在の週の記録がなければファイルを更新し、`github-actions[bot]` 名義でデフォルトブランチへ push します。
+同じ週の記録があれば、ファイルを変更しません。
+週の判定と `recordedAtLocal` は `Asia/Tokyo` を基準にし、タイムゾーン名は `timeZone` に記録します。
+
+`heartbeat` job は `update` job から独立して動きます。
+そのため、休業期間や生成済みによる skip、`update` job の失敗は heartbeat の実行を妨げません。
+`update` job が失敗した場合は、`heartbeat` job が成功しても workflow 全体が失敗します。
+
+heartbeat から判断できるのは、scheduled run が起動したことだけです。
+PDF の更新、KV への書き込み、API の health は判断できません。
+データの状態は `/api/v1/health` と `/api/v1/sources` で確認してください。
+
+`contents: write` は `heartbeat` job だけに付与し、Cloudflare の secret は渡しません。
+`GITHUB_TOKEN` による push から新しい workflow run は作られないため、このコミットは別の workflow を再帰的に起動しません。
+
+`heartbeat` job が失敗した場合は、Actions のログ、`GITHUB_TOKEN` の権限、デフォルトブランチの保護設定を確認してください。
 
 各 workflow run は、再試行で回復する可能性がある ingest または upload の失敗だけを最大 3 回再試行します。
 parse 失敗、`source_changed`、secrets の不足、休業設定の破損など、再試行しても回復しない失敗は再試行しません。
