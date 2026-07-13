@@ -1,3 +1,5 @@
+import { inferDateFromMonthDay } from "./dates";
+
 export interface NoticeBounds {
   left: number;
   bottom: number;
@@ -132,14 +134,7 @@ function classifyClosureNotice(
 
 function closurePredicate(text: string): boolean {
   const normalized = normalizeText(text);
-  return (
-    /臨時休業/.test(normalized) ||
-    /休業(?:します|いたします|となります|です)?(?:$|[。\s])/.test(normalized) ||
-    /(?:^|\s)定休日(?:$|\s)/.test(normalized) ||
-    /(?:^|\s)閉店(?:します|いたします|です)?(?:$|[。\s])/.test(normalized) ||
-    /^(?:お休み|休みます)$/i.test(normalized) ||
-    /\bclosed\b/i.test(normalized)
-  );
+  return /休業|休み|定休日|閉店|\bclosed\b/i.test(normalized);
 }
 
 function isNoticeContextLine(text: string): boolean {
@@ -153,14 +148,15 @@ function weekdayFromText(text: string): number | null {
 }
 
 function datesFromText(text: string, contextDate: string): string[] {
-  const year = Number(contextDate.slice(0, 4));
   const dates: string[] = [];
   for (const match of normalizeText(text).matchAll(/(\d{1,2})月(\d{1,2})日/g)) {
     const month = Number(match[1]);
     const day = Number(match[2]);
-    const candidate = new Date(Date.UTC(year, month - 1, day));
-    if (candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) continue;
-    dates.push(candidate.toISOString().slice(0, 10));
+    try {
+      dates.push(inferDateFromMonthDay(month, day, contextDate));
+    } catch {
+      // Invalid calendar dates are not notice evidence.
+    }
   }
   return Array.from(new Set(dates));
 }

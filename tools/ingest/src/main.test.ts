@@ -1,12 +1,14 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { kvKeys, SOURCE_PAGE_URL } from "@cit-cafeteria/schema";
+import { createEmptyLocationMenu, kvKeys, SOURCE_PAGE_URL } from "@cit-cafeteria/schema";
 import { describe, expect, it } from "vitest";
 import type { KvWrite } from "./documents";
 import { INGEST_USER_AGENT } from "./fetchDiagnostics";
 import { CloudflareKvReadError, type CloudflareKvConfig } from "./kv";
 import { exitCodeForError, type IngestEnv, IngestRunError, runIngest } from "./main";
+import type { LocationParseResult } from "./parser";
+import type { IngestSource } from "./sources";
 
 const ENV: IngestEnv = {
   CLOUDFLARE_ACCOUNT_ID: "account",
@@ -212,6 +214,65 @@ describe("ingest runner", () => {
     expect(JSON.parse(healthWrite?.value ?? "{}")).toMatchObject({ status: "failed" });
   });
 
+  it("uploads diagnostic documents before rejecting an all-untrusted run", async () => {
+    const uploads: KvWrite[][] = [];
+
+    await expect(
+      runIngest({
+        env: { ...ENV, TARGET_DATE: "2026-07-13" },
+        fetchImpl: sourcePageFetch,
+        ingestLocation: async (source, _limits, targetDate) => unknownLocationResult(source, targetDate),
+        upload: async (_config, writes) => {
+          uploads.push([...writes]);
+        },
+        readKvValue: async () => null,
+        now: new Date("2026-07-13T00:00:00.000Z")
+      })
+    ).rejects.toMatchObject({ retryable: false });
+
+    expect(uploads).toHaveLength(1);
+    const healthWrite = uploads[0].find((write) => write.key === kvKeys.healthCurrent);
+    expect(JSON.parse(healthWrite?.value ?? "{}")).toMatchObject({ status: "failed" });
+
+    const menuWrite = uploads[0].find((write) => write.key === kvKeys.menuAll("2026-07-13"));
+    const menu = JSON.parse(menuWrite?.value ?? "{}") as {
+      locations?: Array<{
+        status: string;
+        menuItems: unknown[];
+        menuText: { rawText: string | null };
+        unassignedLines: string[];
+      }>;
+    };
+    expect(menu.locations).toHaveLength(3);
+    expect(
+      menu.locations?.every(
+        (location) =>
+          location.status === "unknown" &&
+          location.menuItems.length === 0 &&
+          location.menuText.rawText === "休業" &&
+          location.unassignedLines.includes("休業")
+      )
+    ).toBe(true);
+  });
+
+  it("returns failed diagnostic artifacts successfully during an all-untrusted dry-run", async () => {
+    let uploaded = false;
+    const result = await runIngest({
+      env: { DRY_RUN: "true", TARGET_DATE: "2026-07-13" },
+      fetchImpl: sourcePageFetch,
+      ingestLocation: async (source, _limits, targetDate) => unknownLocationResult(source, targetDate),
+      upload: async () => {
+        uploaded = true;
+      },
+      now: new Date("2026-07-13T00:00:00.000Z")
+    });
+
+    expect(uploaded).toBe(false);
+    expect(result.dates).toEqual(["2026-07-13"]);
+    const healthWrite = result.writes.find((write) => write.key === kvKeys.healthCurrent);
+    expect(JSON.parse(healthWrite?.value ?? "{}")).toMatchObject({ status: "failed" });
+  });
+
   it("classifies source discovery network failures as retryable even when fallback PDFs parse-fail", async () => {
     await expect(
       runIngest({
@@ -274,6 +335,35 @@ const sourcePageFailureThenInvalidPdfFetch: typeof fetch = async (input) => {
 
   return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
 };
+
+const sourcePageFetch: typeof fetch = async (input) => {
+  if (String(input) === SOURCE_PAGE_URL) return new Response("<html></html>", { status: 200 });
+  throw new Error(`Unexpected PDF fetch: ${String(input)}`);
+};
+
+function unknownLocationResult(source: IngestSource, date: string): LocationParseResult {
+  const sourceInfo = {
+    sourcePageUrl: source.sourcePageUrl,
+    pdfUrl: source.pdfUrl
+  };
+  const menu = createEmptyLocationMenu(source.locationId, "unknown", "Closure scope is unknown.", sourceInfo, [
+    "closure_notice_subject_unknown"
+  ]);
+  menu.menuText = { format: "plain_text", rawText: "休業", lines: ["休業"] };
+  menu.unassignedLines = ["休業"];
+
+  return {
+    locationId: source.locationId,
+    source,
+    sourceInfo,
+    status: "ok",
+    statusMessage: "Parsed PDF date columns.",
+    warnings: [],
+    menusByDate: new Map([[date, menu]]),
+    fallbackStatuses: new Map(),
+    notices: []
+  };
+}
 
 async function expectGeneratedSkipMiss(readKvValue: ReadKvValue, env: Partial<IngestEnv> = {}): Promise<void> {
   const calls: string[] = [];
