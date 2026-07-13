@@ -30,6 +30,7 @@ export interface PdfTextRecoveryResult {
   items: PdfPlacementTextItem[];
   diagnostics: PdfTextRecoveryDiagnostic[];
   warnings: string[];
+  claimedRunIndexes: number[];
 }
 
 interface Candidate {
@@ -91,7 +92,10 @@ export function recoverPageEdgeTextAffixes(
   return {
     items: recovered,
     diagnostics,
-    warnings: ambiguous ? ["pdf_text_edge_affix_recovery_ambiguous"] : []
+    warnings: ambiguous ? ["pdf_text_edge_affix_recovery_ambiguous"] : [],
+    claimedRunIndexes: Array.from(
+      new Set([...reservedRuns, ...candidates.map((candidate) => candidate.runIndex)])
+    ).sort((a, b) => a - b)
   };
 }
 

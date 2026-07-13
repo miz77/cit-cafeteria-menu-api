@@ -3,6 +3,11 @@ import type { LocationStatus } from "@cit-cafeteria/schema";
 import { fetchFailureSlug, formatFetchErrorDetails, INGEST_USER_AGENT, logFetchFailure } from "./fetchDiagnostics";
 import { loadPdfOperatorPage, resolvePdfOperatorRuntime, type PdfOperatorPageProxy } from "./pdfOperatorSource";
 import { extractPdfRulings, type PdfPageGeometry } from "./pdfRulings";
+import {
+  collectPdfEdgeOverflowMenuEvidence,
+  type PdfEdgeOverflowDiagnostic,
+  type PdfEdgeOverflowMenuEvidence
+} from "./pdfEdgeOverflow";
 import { collectPdfOperatorTextRuns } from "./pdfTextOperators";
 import {
   recoverPageEdgeTextAffixes,
@@ -51,7 +56,8 @@ export interface PdfExtraction {
   items: PdfTextItem[];
   warnings: string[];
   pageGeometry?: PdfPageGeometry[];
-  diagnostics?: PdfTextRecoveryDiagnostic[];
+  edgeOverflowMenuEvidence?: PdfEdgeOverflowMenuEvidence[];
+  diagnostics?: Array<PdfTextRecoveryDiagnostic | PdfEdgeOverflowDiagnostic>;
 }
 
 interface PdfPageProxy extends PdfOperatorPageProxy {
@@ -162,7 +168,8 @@ async function extractWithDocumentProxy(
   const items: PdfTextItem[] = [];
   const warnings: string[] = [...operatorRuntime.warnings];
   const pageGeometry: PdfPageGeometry[] = [];
-  const diagnostics: PdfTextRecoveryDiagnostic[] = [];
+  const diagnostics: Array<PdfTextRecoveryDiagnostic | PdfEdgeOverflowDiagnostic> = [];
+  const edgeOverflowMenuEvidence: PdfEdgeOverflowMenuEvidence[] = [];
   for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     // PDF.js assigns font identifiers while producing text content. Keep this
@@ -198,13 +205,21 @@ async function extractWithDocumentProxy(
         recoveredItems = recovered.items;
         diagnostics.push(...recovered.diagnostics);
         pushUnique(warnings, recovered.warnings);
+        const overflow = collectPdfEdgeOverflowMenuEvidence(
+          runs,
+          operatorPage.value.view,
+          new Set(recovered.claimedRunIndexes)
+        );
+        edgeOverflowMenuEvidence.push(...overflow.evidence);
+        diagnostics.push(...overflow.diagnostics);
+        pushUnique(warnings, overflow.warnings);
       }
     }
 
     items.push(...recoveredItems.map(({ fontName: _fontName, ...item }) => item));
   }
 
-  return { pageCount, items, warnings, pageGeometry, diagnostics };
+  return { pageCount, items, warnings, pageGeometry, edgeOverflowMenuEvidence, diagnostics };
 }
 
 async function extractWithPlainText(

@@ -131,6 +131,7 @@ describe("clipped PDF text recovery", () => {
 
     expect(result.items[0].text).toBe("身フライ");
     expect(result.warnings).toEqual(["pdf_text_edge_affix_recovery_ambiguous"]);
+    expect(result.claimedRunIndexes).toEqual([0, 1]);
   });
 
   it("does not rewrite internal differences or non-clipped affixes", () => {
@@ -152,6 +153,7 @@ describe("clipped PDF text recovery", () => {
     const result = recoverPageEdgeTextAffixes([exact, clipped], [operatorRun("白身フライ", -10)], PAGE_VIEW);
 
     expect(result.items.map((item) => item.text)).toEqual(["白身フライ", "身フライ"]);
+    expect(result.claimedRunIndexes).toEqual([0]);
   });
 
   it("keeps text and empty geometry when the optional operator list fails", async () => {

@@ -13,6 +13,7 @@ import type { FetchedPdf, PdfExtraction, PdfLimits, PdfTextItem } from "./pdf";
 import type { IngestSource } from "./sources";
 import { type ColumnRow, DEFAULT_STRUCTURE_PROFILE, type StructureProfile, structureMenuRows } from "./structure";
 import { inferMergedColumnSpans } from "./tableGeometry";
+import { resolveSharedRowOverflow, type SharedRowBand } from "./sharedRowOverflow";
 
 export interface LocationParseResult {
   locationId: LocationId;
@@ -205,7 +206,7 @@ export function parseLocationPdf(
     }
   );
   const geometryWarnings = columnSpans.warnings;
-  const sharedRows = collectSharedRows(extraction.items, profile);
+  const sharedRows = collectSharedRows(extraction.items, profile, extraction.edgeOverflowMenuEvidence ?? []);
   const profileWarnings = [...sharedRows.warnings];
   if (blockCount > 1) {
     warnings.push("multi_block_layout_detected");
@@ -598,15 +599,32 @@ function extractColumnRows(
 
 function collectSharedRows(
   items: readonly PdfTextItem[],
-  profile: LocationParserProfile
+  profile: LocationParserProfile,
+  overflowEvidence: NonNullable<PdfExtraction["edgeOverflowMenuEvidence"]>
 ): { menuItems: MenuItem[]; excludeYRanges: YRange[]; warnings: string[]; columnBottomY?: number } {
   const menuItems: MenuItem[] = [];
   const excludeYRanges: YRange[] = [];
   const warnings: string[] = [];
   let columnBottomY: number | undefined;
+  const labels = new Map<string, PdfTextItem>();
+  const bands: SharedRowBand[] = [];
 
   for (const rule of profile.sharedRows ?? []) {
     const label = items.find((item) => normalizeText(item.text) === rule.label && item.x <= rule.labelMaxX);
+    if (!label) continue;
+    labels.set(rule.warningSlug, label);
+    bands.push({
+      id: rule.warningSlug,
+      page: label.page,
+      minY: label.y - rule.maxBelow,
+      maxY: label.y + rule.maxAbove
+    });
+  }
+  const overflow = resolveSharedRowOverflow(overflowEvidence, bands);
+  warnings.push(...overflow.warnings);
+
+  for (const rule of profile.sharedRows ?? []) {
+    const label = labels.get(rule.warningSlug);
     if (!label) {
       warnings.push(profileRowsNotDetectedWarning(rule.warningSlug));
       continue;
@@ -620,9 +638,12 @@ function collectSharedRows(
 
     const rowItems = items.filter((item) => item.page === label.page && item.y >= range.min && item.y <= range.max);
     const parsed = parseSharedPriceItems(rowItems, rule);
+    const recovered = (overflow.evidenceByRowId.get(rule.warningSlug) ?? []).map((item) =>
+      sharedMenuItem(item.name, item.priceYen, rule)
+    );
 
     excludeYRanges.push(range);
-    menuItems.push(...parsed);
+    menuItems.push(...parsed, ...recovered);
   }
 
   return { menuItems: uniqueMenuItems(menuItems), excludeYRanges, warnings: uniqueWarnings(warnings), columnBottomY };

@@ -1090,5 +1090,35 @@
       "height": 28.824
     }
   ],
+  "edgeOverflowMenuEvidence": [
+    {
+      "page": 1,
+      "name": "ライス",
+      "priceYen": 100,
+      "side": "left",
+      "bounds": {
+        "left": -191.4199981689453,
+        "bottom": 328.82000732421875,
+        "right": -24.35999304929686,
+        "top": 357.62000732421876
+      },
+      "baselineY": 328.82000732421875,
+      "sourceRunIndexes": [86, 87]
+    },
+    {
+      "page": 1,
+      "name": "味噌汁",
+      "priceYen": 50,
+      "side": "right",
+      "bounds": {
+        "left": 628.6099853515625,
+        "bottom": 328.82000732421875,
+        "right": 787.6060132698437,
+        "top": 357.62000732421876
+      },
+      "baselineY": 328.82000732421875,
+      "sourceRunIndexes": [95, 96]
+    }
+  ],
   "warnings": []
 }

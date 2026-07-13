@@ -608,6 +608,35 @@ describe("simple PDF parser", () => {
     expect(result.warnings).not.toContain("pdf_text_edge_affix_recovery_ambiguous");
   });
 
+  it("adds complete page-edge side dishes to published weekdays only", () => {
+    const result = parseLocationPdf(
+      fetchedPdf("shinnarashino-1f"),
+      loadFixture("shinnarashino-1f-20260713.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    for (const day of ["13", "14", "15", "16", "17"]) {
+      const sideDishes = result.menusByDate
+        .get(`2026-07-${day}`)
+        ?.menuItems.filter((item) => item.category === "side_dish")
+        .map((item) => [item.name, item.priceYen]);
+      expect(sideDishes).toEqual(
+        expect.arrayContaining([
+          ["ライス", 100],
+          ["唐揚", 150],
+          ["コロッケ", 50],
+          ["サラダ", 50],
+          ["味噌汁", 50]
+        ])
+      );
+    }
+
+    const saturday = result.menusByDate.get("2026-07-18");
+    expect(saturday?.status).toBe("not_published");
+    expect(saturday?.menuItems).toEqual([]);
+  });
+
   it("does not structure menuItems for non-ok location days", () => {
     const result = parseLocationPdf(
       fetchedPdf(),
