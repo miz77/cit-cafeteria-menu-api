@@ -151,4 +151,14 @@ pnpm --filter @cit-cafeteria/api-worker check:bundle
 4. PDF が取得可能か、サイズ・ページ数上限内かを確認します。
 5. PDF の表レイアウトが変わっている場合は parser と fixtures を更新します。
 
-結合セルはPDFの縦横罫線から列範囲を復元します。内部境界が隣接行で確認できない、外周罫線が閉じない、同じrow band内の別列に競合テキストがある、など証拠が不足する場合は展開せず `ambiguous_column_span_not_expanded` を記録します。`pdf_operator_*` または `pdf_ruling_*` warningがある場合も基本テキスト抽出は継続されます。dependency更新時は、対応するPDF.js/unpdf versionのcharacterization testと手元PDFの罫線抽出を再確認してください。
+### 結合セルが展開されない場合
+結合セルの列範囲は、PDFの縦罫線と横罫線から推定します。
+次のいずれかに該当する場合は、誤った展開を避けるため、単一の日付列への割り当てを維持します。
+
+- 内部境界を隣接する行で確認できない  
+- 上下左右の外周罫線を確認できない  
+- 推定した列範囲の別の日付列に、同じ行領域のテキストがある  
+
+展開しなかった場合は、`ambiguous_column_span_not_expanded`を記録します。
+`pdf_operator_*`または`pdf_ruling_*`の警告が発生しても、通常のテキスト抽出は継続します。
+PDF.jsまたはunpdfを更新した場合は、対応バージョンのcharacterization testと、手元のPDFを使った罫線抽出を再確認します。
