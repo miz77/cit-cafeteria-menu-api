@@ -34,6 +34,41 @@ export interface PdfEdgeOverflowResult {
   warnings: string[];
 }
 
+/** Returns the maximal visible run chain that physically touches an off-page group. */
+export function edgeConnectedVisibleRuns(group: PdfOffPageTextGroup): PdfEdgeTextRunEvidence[] {
+  if (group.runs.length === 0 || group.visibleAnchors.length === 0) return [];
+
+  const outside = [...group.runs].sort((left, right) => left.bounds.left - right.bounds.left);
+  const visible = [...group.visibleAnchors].sort((left, right) => left.bounds.left - right.bounds.left);
+  const selected: PdfEdgeTextRunEvidence[] = [];
+
+  if (group.side === "right") {
+    let next = outside[0];
+    for (let index = visible.length - 1; index >= 0; index -= 1) {
+      const candidate = visible[index];
+      if (!connected(candidate.bounds, next.bounds)) {
+        if (selected.length > 0) break;
+        continue;
+      }
+      selected.unshift(candidate);
+      next = candidate;
+    }
+  } else {
+    let previous = outside.at(-1);
+    if (!previous) return [];
+    for (const candidate of visible) {
+      if (!connected(previous.bounds, candidate.bounds)) {
+        if (selected.length > 0) break;
+        continue;
+      }
+      selected.push(candidate);
+      previous = candidate;
+    }
+  }
+
+  return selected;
+}
+
 interface IndexedRun {
   index: number;
   run: PdfOperatorTextRun;

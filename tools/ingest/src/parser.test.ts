@@ -408,8 +408,21 @@ describe("simple PDF parser", () => {
       expect.arrayContaining([
         expect.objectContaining({ name: "四川風焼肉丼 水ギョーザ", priceYen: 400 }),
         expect.objectContaining({ name: "唐揚 ピリ辛ソース", priceYen: 350 }),
+        expect.objectContaining({
+          name: "ハンバーグ きのこトマトソース ポテトサラダ",
+          category: "koudai_teishoku",
+          priceYen: 350
+        }),
+        expect.objectContaining({
+          name: "とりムネとパプリカ",
+          category: "higawari_salad",
+          priceYen: 150
+        }),
         expect.objectContaining({ name: "ビビンバ丼", category: "yu_teishoku", priceYen: 300 })
       ])
+    );
+    expect(friday?.menuItems.map((item) => item.name)).not.toContain(
+      "ハンバーグ きのこトマトソース ポテトサラダ とりムネとパプリカ"
     );
     expect(friday?.parser.warnings).not.toContain("closed_notice_conflicts_with_daily_menu");
     expect(result.notices).toEqual(
@@ -690,6 +703,39 @@ describe("simple PDF parser", () => {
           rowId: "shinnarashino-1f:side_dish",
           name: "味噌汁",
           priceYen: 50
+        })
+      ])
+    );
+  });
+
+  it("keeps label-named and edge-completed curry items on published weekdays", () => {
+    const result = parseLocationPdf(
+      fetchedPdf("shinnarashino-1f"),
+      loadFixture("shinnarashino-1f-20260713.json"),
+      DEFAULT_PDF_LIMITS,
+      "2026-07-13"
+    );
+
+    for (const day of ["13", "14", "15", "16", "17"]) {
+      const curries = result.menusByDate
+        .get(`2026-07-${day}`)
+        ?.menuItems.filter((item) => item.category === "curry")
+        .map((item) => [item.name, item.priceYen]);
+      expect(curries).toEqual([
+        ["カレー", 250],
+        ["サラダ付カレー", 300],
+        ["大盛カレー", 300]
+      ]);
+    }
+
+    expect(result.menusByDate.get("2026-07-18")?.menuItems).toEqual([]);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "pdf_text_edge_shared_item_recovered",
+          rowId: "shinnarashino-1f:curry",
+          name: "大盛カレー",
+          priceYen: 300
         })
       ])
     );

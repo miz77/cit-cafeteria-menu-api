@@ -21,6 +21,38 @@ describe("shared-row overflow resolution", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("completes a pair from one edge-connected visible name and an off-page price", () => {
+    const result = resolveSharedRowOverflow([splitAtRightEdgeGroup(0)], [BAND]);
+
+    expect(result.recoveredByRowId.get("side")).toEqual([
+      expect.objectContaining({ name: "大盛カレー", priceYen: 300, side: "right" })
+    ]);
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "pdf_text_edge_shared_item_recovered",
+        rowId: "side",
+        sourceRunIndexes: [8, 9]
+      })
+    ]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("does not join a visible name to a disconnected off-page price", () => {
+    const result = resolveSharedRowOverflow([splitAtRightEdgeGroup(20)], [BAND]);
+
+    expect(result.recoveredByRowId.size).toBe(0);
+    expect(result.diagnostics[0].code).toBe("pdf_text_edge_candidate_incomplete_pair");
+  });
+
+  it("requires independent visible typography evidence for an edge-connected name", () => {
+    const candidate = splitAtRightEdgeGroup(0);
+    candidate.visibleAnchors[0] = { ...candidate.visibleAnchors[0], fontName: "other-name" };
+    const result = resolveSharedRowOverflow([candidate], [BAND]);
+
+    expect(result.recoveredByRowId.size).toBe(0);
+    expect(result.diagnostics[0].code).toBe("pdf_text_edge_candidate_anchor_unverified");
+  });
+
   it("rejects a complete but distant stale cell", () => {
     const result = resolveSharedRowOverflow([group("ライス￥", "100", "left", 225)], [BAND]);
 
@@ -111,6 +143,45 @@ function group(
         fontName: "price",
         bounds: { left: 120, bottom: baselineY, right: 164, top: baselineY + 28.8 },
         sourceRunIndex: 4
+      }
+    ]
+  };
+}
+
+function splitAtRightEdgeGroup(gap: number): PdfOffPageTextGroup {
+  const baselineY = 328.82;
+  return {
+    page: 1,
+    side: "right",
+    baselineY,
+    bounds: { left: 596 + gap, bottom: baselineY, right: 646 + gap, top: baselineY + 28.8 },
+    edgeGap: 1 + gap,
+    runs: [
+      {
+        text: "300",
+        fontName: "price",
+        bounds: { left: 596 + gap, bottom: baselineY, right: 646 + gap, top: baselineY + 28.8 },
+        sourceRunIndex: 9
+      }
+    ],
+    visibleAnchors: [
+      {
+        text: "サラダ付カレー￥",
+        fontName: "name",
+        bounds: { left: 300, bottom: baselineY, right: 470, top: baselineY + 28.8 },
+        sourceRunIndex: 6
+      },
+      {
+        text: "300",
+        fontName: "price",
+        bounds: { left: 470, bottom: baselineY, right: 520, top: baselineY + 28.8 },
+        sourceRunIndex: 7
+      },
+      {
+        text: "大盛カレー￥",
+        fontName: "name",
+        bounds: { left: 437, bottom: baselineY, right: 596.3, top: baselineY + 28.8 },
+        sourceRunIndex: 8
       }
     ]
   };

@@ -1,5 +1,5 @@
 import type { PdfBounds } from "./pdfGraphicsState";
-import type { PdfOffPageTextGroup } from "./pdfEdgeOverflow";
+import { edgeConnectedVisibleRuns, type PdfEdgeTextRunEvidence, type PdfOffPageTextGroup } from "./pdfEdgeOverflow";
 import { normalizePriceToken, parseSharedPricePairs } from "./sharedPriceTokens";
 
 export interface SharedRowBand {
@@ -81,9 +81,10 @@ export function resolveSharedRowOverflow(
     }
 
     const rowId = matching[0].id;
-    const pairs = parseSharedPricePairs(group.runs.map((run) => run.text));
+    const candidateGroup = completeCandidateGroup(group);
+    const pairs = candidateGroup ? parseSharedPricePairs(candidateGroup.runs.map((run) => run.text)) : [];
     const consumed = new Set(pairs.flatMap((pair) => pair.consumedTokenIndexes));
-    if (pairs.length !== 1 || consumed.size !== group.runs.length) {
+    if (!candidateGroup || pairs.length !== 1 || consumed.size !== candidateGroup.runs.length) {
       diagnostics.push(diagnostic("pdf_text_edge_candidate_incomplete_pair", group, rowId));
       if (group.runs.some((run) => /[¥\\]/.test(normalizePriceToken(run.text)))) {
         warnings.add("pdf_text_edge_candidate_incomplete_pair");
@@ -92,16 +93,16 @@ export function resolveSharedRowOverflow(
     }
 
     const pair = pairs[0];
-    if (!typographyMatches(group, pair.nameTokenIndex, pair.priceTokenIndexes)) {
-      diagnostics.push(diagnostic("pdf_text_edge_candidate_anchor_unverified", group, rowId));
+    if (!typographyMatches(candidateGroup, pair.nameTokenIndex, pair.priceTokenIndexes)) {
+      diagnostics.push(diagnostic("pdf_text_edge_candidate_anchor_unverified", candidateGroup, rowId));
       warnings.add("pdf_text_edge_candidate_anchor_unverified");
       continue;
     }
 
-    const maxEdgeGap = allowedEdgeGap(group);
+    const maxEdgeGap = allowedEdgeGap(candidateGroup);
     if (group.edgeGap > maxEdgeGap) {
       diagnostics.push({
-        ...diagnostic("pdf_text_edge_candidate_too_far", group, rowId),
+        ...diagnostic("pdf_text_edge_candidate_too_far", candidateGroup, rowId),
         maxEdgeGap,
         name: pair.name,
         priceYen: pair.priceYen
@@ -109,7 +110,7 @@ export function resolveSharedRowOverflow(
       warnings.add("pdf_text_edge_candidate_too_far");
       continue;
     }
-    valid.push({ group, rowId, name: pair.name, priceYen: pair.priceYen, maxEdgeGap });
+    valid.push({ group: candidateGroup, rowId, name: pair.name, priceYen: pair.priceYen, maxEdgeGap });
   }
 
   const candidateCounts = occurrenceCounts(valid.map((candidate) => `${candidate.rowId}:${candidate.group.side}`));
@@ -150,7 +151,10 @@ function typographyMatches(
 ): boolean {
   const nameRun = group.runs[nameTokenIndex];
   const nameAnchor = group.visibleAnchors.some(
-    (anchor) => anchor.fontName === nameRun.fontName && /^.+?[¥\\]/.test(normalizePriceToken(anchor.text))
+    (anchor) =>
+      anchor.sourceRunIndex !== nameRun.sourceRunIndex &&
+      anchor.fontName === nameRun.fontName &&
+      /^.+?[¥\\]/.test(normalizePriceToken(anchor.text))
   );
   if (!nameAnchor) return false;
 
@@ -158,9 +162,32 @@ function typographyMatches(
   return continuationIndexes.every((index) => {
     const priceRun = group.runs[index];
     return group.visibleAnchors.some(
-      (anchor) => anchor.fontName === priceRun.fontName && /^\d+$/.test(normalizePriceToken(anchor.text))
+      (anchor) =>
+        anchor.sourceRunIndex !== priceRun.sourceRunIndex &&
+        anchor.fontName === priceRun.fontName &&
+        /^\d+$/.test(normalizePriceToken(anchor.text))
     );
   });
+}
+
+function completeCandidateGroup(group: PdfOffPageTextGroup): PdfOffPageTextGroup | null {
+  if (isCompletePair(group.runs)) return group;
+
+  const connectedVisible = edgeConnectedVisibleRuns(group);
+  if (connectedVisible.length === 0) return null;
+  const runs = [...connectedVisible, ...group.runs].sort((left, right) => left.bounds.left - right.bounds.left);
+  if (!isCompletePair(runs)) return null;
+
+  return {
+    ...group,
+    bounds: unionBounds(runs.map((run) => run.bounds)),
+    runs
+  };
+}
+
+function isCompletePair(runs: readonly PdfEdgeTextRunEvidence[]): boolean {
+  const pairs = parseSharedPricePairs(runs.map((run) => run.text));
+  return pairs.length === 1 && new Set(pairs[0].consumedTokenIndexes).size === runs.length;
 }
 
 function allowedEdgeGap(group: PdfOffPageTextGroup): number {
@@ -208,4 +235,13 @@ function median(values: readonly number[]): number | null {
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+function unionBounds(bounds: readonly PdfBounds[]): PdfBounds {
+  return {
+    left: Math.min(...bounds.map((item) => item.left)),
+    bottom: Math.min(...bounds.map((item) => item.bottom)),
+    right: Math.max(...bounds.map((item) => item.right)),
+    top: Math.max(...bounds.map((item) => item.top))
+  };
 }
