@@ -151,6 +151,35 @@ pnpm --filter @cit-cafeteria/api-worker check:bundle
 4. PDF が取得可能か、サイズ・ページ数上限内かを確認します。
 5. PDF の表レイアウトが変わっている場合は parser と fixtures を更新します。
 
-結合セルはPDFの縦横罫線から列範囲を復元します。内部境界が隣接行で確認できない、外周罫線が閉じない、同じrow band内の別列に競合テキストがある、など証拠が不足する場合は展開せず `ambiguous_column_span_not_expanded` を記録します。`pdf_operator_*` または `pdf_ruling_*` warningがある場合も基本テキスト抽出は継続されます。dependency更新時は、対応するPDF.js/unpdf versionのcharacterization testと手元PDFの罫線抽出を再確認してください。
+### 結合セルが展開されない場合
 
-ページ端の外側にある文字は、operator上でページ端へ連続し、`getTextContent()`と対応した同一行の文字がanchorになり、既知の共有行へ一意に割り当てられる場合だけ復元します。run logの`pdf_text_edge_candidate_detected`は抽出候補、`pdf_text_edge_shared_item_recovered`は共有行への採用を表します。`candidate_unassigned`は調査用diagnosticに留まり、既知の共有行で不完全・曖昧・遠すぎる候補だけがparser warningになります。成功diagnosticにはrow id、座標、ページ端までの距離、判定上限、operator run indexが記録されます。
+結合セルの列範囲は、PDFの縦罫線と横罫線から推定します。
+次のいずれかに該当する場合は、誤った展開を避けるため、単一の日付列への割り当てを維持します。
+
+- 内部境界を隣接する行で確認できない
+- 上下左右の外周罫線を確認できない
+- 推定した列範囲の別の日付列に、同じ行領域のテキストがある
+
+展開しなかった場合は、`ambiguous_column_span_not_expanded`を記録します。
+`pdf_operator_*`または`pdf_ruling_*`の警告が発生しても、通常のテキスト抽出は継続します。
+PDF.jsまたはunpdfを更新した場合は、対応バージョンのcharacterization testと、手元のPDFを使った罫線抽出を再確認します。
+
+### ページ端の外側にある共有メニューが復元されない場合
+
+ページ端の外側にある文字は、次の条件をすべて満たす場合だけ共有メニューとして採用します。
+
+- operator上で同じ行の文字列として連続している
+- 料理名と価格の組が完全である
+- `getTextContent()`で抽出された同じ行の文字と書体が一致する
+- 既知の共有行へ一意に割り当てられる
+- ページ端からの距離が、文字サイズと可視文字の間隔から求めた上限内にある
+
+`pdf_text_edge_candidate_detected`は、ページ端の外側で抽出候補を検出したことを表します。
+`pdf_text_edge_shared_item_recovered`は、その候補を共有メニューとして採用したことを表します。
+
+既知の共有行へ割り当てられなかった候補は、`pdf_text_edge_candidate_unassigned`としてdiagnosticに記録します。
+この場合は、メニューの欠落を示す証拠がないためwarningにはしません。
+
+既知の共有行にある候補が不完全、曖昧、書体不一致、または遠すぎる場合は、対応するparser warningを記録します。
+
+採用に成功したdiagnosticには、共有行ID、料理名、価格、座標、ページ端までの距離、判定上限、operator runのindexを記録します。
