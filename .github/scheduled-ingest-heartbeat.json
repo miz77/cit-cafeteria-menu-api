@@ -1,8 +1,8 @@
 {
-  "week": "2026-W43",
-  "recordedAtLocal": "2026-10-19 07:22:36",
+  "week": "2026-W44",
+  "recordedAtLocal": "2026-10-26 07:28:00",
   "timeZone": "Asia/Tokyo",
-  "workflowRunId": "39171943151",
+  "workflowRunId": "40240312101",
   "workflowRunAttempt": 1,
-  "workflowRunUrl": "https://github.com/miz77/cit-cafeteria-menu-api/actions/runs/39171943151"
+  "workflowRunUrl": "https://github.com/miz77/cit-cafeteria-menu-api/actions/runs/40240312101"
 }
